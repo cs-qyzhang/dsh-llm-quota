@@ -54,9 +54,9 @@ window.__ModuleLoader__.load({
         qwenMonthly: '月度额度',
         qwenPlanLeft: '套餐剩 {percent}%',
         missingConsoleToken: '未配置 Qwen 控制台 Token',
-        openrouterRemaining: '剩余额度',
-        openrouterCredits: '已购买额度',
-        openrouterUsage: '已使用',
+        creditsRemaining: '剩余额度',
+        creditsPurchased: '已购买额度',
+        creditsUsed: '已使用',
         badgeFiveHour: '5h {percent}%',
         badgeWeekly: '周 {percent}%',
         badgePlan: '套餐 {percent}%',
@@ -102,9 +102,9 @@ window.__ModuleLoader__.load({
         qwenMonthly: 'Monthly quota',
         qwenPlanLeft: 'Plan {percent}% left',
         missingConsoleToken: 'Qwen console token not configured',
-        openrouterRemaining: 'Credits remaining',
-        openrouterCredits: 'Credits purchased',
-        openrouterUsage: 'Usage',
+        creditsRemaining: 'Credits remaining',
+        creditsPurchased: 'Credits purchased',
+        creditsUsed: 'Usage',
         badgeFiveHour: '5h {percent}%',
         badgeWeekly: 'Wk {percent}%',
         badgePlan: 'Plan {percent}%',
@@ -227,7 +227,7 @@ window.__ModuleLoader__.load({
 
     function compactLabel(data, tr) {
       if (!data || data.ok === false) return tr('error')
-      if (data.kind === 'balance' || data.kind === 'openrouter') {
+      if (data.kind === 'balance' || data.kind === 'openrouter' || data.kind === 'vercel-gateway') {
         return tr('balance', { amount: formatAmount(data.currency, data.amount) })
       }
       if (data.kind === 'xiaomi-mimo') {
@@ -253,7 +253,7 @@ window.__ModuleLoader__.load({
 
     function badgeText(data, tr) {
       if (!data || data.ok !== true) return ''
-      if (data.kind === 'balance' || data.kind === 'openrouter') {
+      if (data.kind === 'balance' || data.kind === 'openrouter' || data.kind === 'vercel-gateway') {
         return formatAmount(data.currency, data.amount)
       }
       if (data.kind === 'xiaomi-mimo') {
@@ -287,6 +287,7 @@ window.__ModuleLoader__.load({
       if (data.kind === 'glm') return data.level ? `GLM ${capitalise(data.level)}` : 'GLM'
       if (data.kind === 'kimi') return 'Kimi'
       if (data.kind === 'openrouter') return 'OpenRouter'
+      if (data.kind === 'vercel-gateway') return 'Vercel AI Gateway'
       if (data.kind === 'minimax') {
         return data.model ? `MiniMax · ${data.model}` : 'MiniMax'
       }
@@ -643,16 +644,16 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
           }
           return rows
         }
-        if (data.kind === 'openrouter') {
+        if (data.kind === 'openrouter' || data.kind === 'vercel-gateway') {
           const rows = []
           if (data.amount !== undefined) {
-            rows.push(detailRow(tr('openrouterRemaining'), formatAmount(data.currency, data.amount)))
+            rows.push(detailRow(tr('creditsRemaining'), formatAmount(data.currency, data.amount)))
           }
           if (data.totalCredits !== undefined) {
-            rows.push(detailRow(tr('openrouterCredits'), formatAmount(data.currency, data.totalCredits)))
+            rows.push(detailRow(tr('creditsPurchased'), formatAmount(data.currency, data.totalCredits)))
           }
           if (data.totalUsage !== undefined) {
-            rows.push(detailRow(tr('openrouterUsage'), formatAmount(data.currency, data.totalUsage)))
+            rows.push(detailRow(tr('creditsUsed'), formatAmount(data.currency, data.totalUsage)))
           }
           return rows
         }

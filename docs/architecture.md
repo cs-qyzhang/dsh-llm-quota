@@ -23,6 +23,7 @@ dsh Host
     ├─ Moonshot 按量    → GET api.moonshot.cn|api.moonshot.ai/v1/users/me/balance
     ├─ MiniMax Plan     → GET api.minimax.io|api.minimaxi.com/v1/token_plan/remains
     ├─ OpenRouter       → GET openrouter.ai/api/v1/credits
+    ├─ Vercel Gateway   → GET ai-gateway.vercel.sh/v1/credits
     ├─ Qwen Token Plan  → POST <控制台网关> tokenplan/personal/api/v2/usage
     ├─ Xiaomi MiMo 按量 → GET platform.xiaomimimo.com/api/v1/{balance,userProfile}
     └─ Xiaomi MiMo 套餐 → GET platform.xiaomimimo.com/api/v1/tokenPlan/{usage,detail}
@@ -44,7 +45,7 @@ dsh Host
 | `providers/index.js` | 适配器注册表：已知主机 → 额度端点映射、按 `kind` 分发 `readQuota` |
 | `providers/resolve.js` | 读取 DSH 实时 provider 配置，把 provider id 解析成额度路由（含 `config.providers` 覆盖与 MiMo 计费类型） |
 | `providers/shared.js` | 适配器共享工具：凭证读取、上游 HTTP、缓存指纹、统一响应片段 |
-| `providers/*.js` | 单个额度体系适配器（`account`、`deepseek`、`glm`、`kimi`、`minimax`、`openrouter`、`xiaomi-mimo`） |
+| `providers/*.js` | 单个额度体系适配器（`account`、`deepseek`、`glm`、`kimi`、`minimax`、`moonshot`、`openrouter`、`qwen`、`vercel-gateway`、`xiaomi-mimo`） |
 | `client.js` | Client 插件：注册 locale 字典、向 composer dock 注册条目、模型选择标签/分组标题的额度装饰、轮询、渲染浮层 |
 | `locale/*.json` | 插件管理页使用的标题/描述元数据 |
 | `icon.svg` | 插件图标 |

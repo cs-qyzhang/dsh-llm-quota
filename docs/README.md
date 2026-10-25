@@ -12,6 +12,7 @@
 | GLM Coding Plan（Z.AI / 智谱） | `5h 剩 100% · 周 剩 33%` | 套餐等级、5 小时与周额度、重置时间 |
 | Kimi For Coding | `5h 剩 0% · 周 剩 33%` | 5 小时与周额度、重置时间 |
 | Moonshot 开放平台（按量） | `余额 ¥49.59` | 现金余额、代金券余额、更新时间 |
+| Vercel AI Gateway（按量） | `余额 $95.50` | 剩余额度、已使用、更新时间 |
 | 阿里云百炼 Qwen Token Plan | `套餐剩 50%` | 月度额度、重置时间 |
 | Xiaomi MiMo（按量计费） | `余额 ¥65.28` | 现金/赠送余额、更新时间 |
 | Xiaomi MiMo（Token Plan） | `套餐剩 73%` | 套餐与本月用量、重置时间 |
@@ -43,6 +44,7 @@ dsh-llm-quota/
 │   ├── moonshot.js
 │   ├── openrouter.js
 │   ├── qwen.js
+│   ├── vercel-gateway.js
 │   └── xiaomi-mimo.js
 ├── client.js             # Client 侧：状态行条目、轮询、展开浮层
 ├── locale/
@@ -126,7 +128,7 @@ npx -y pnpm@10 remove @local/dsh-llm-quota
 
 ## 配置
 
-默认情况下，插件通过 DSH 的 provider directory 和 Loader 实时配置确定凭证引用与推理主机，再映射到固定的额度端点。只有 `api.deepseek.com`、`api.z.ai`、`open.bigmodel.cn`、`api.kimi.com`、`api.moonshot.cn`、`api.moonshot.ai`、`token-plan.*.maas.aliyuncs.com` 和 `*.xiaomimimo.com` 会自动适配；OAuth-only 和未知代理主机不会收到凭证。自定义代理需要显式配置额度端点。
+默认情况下，插件通过 DSH 的 provider directory 和 Loader 实时配置确定凭证引用与推理主机，再映射到固定的额度端点。只有 `api.deepseek.com`、`api.z.ai`、`open.bigmodel.cn`、`api.kimi.com`、`api.moonshot.cn`、`api.moonshot.ai`、`openrouter.ai`、`ai-gateway.vercel.sh`、`token-plan.*.maas.aliyuncs.com` 和 `*.xiaomimimo.com` 会自动适配；OAuth-only 和未知代理主机不会收到凭证。自定义代理需要显式配置额度端点。
 
 Xiaomi MiMo 需要两份凭证：推理 Key 放在 `XIAOMI_API_KEY`（模型路由使用），额度 Cookie 放在 `MIMO_COOKIE`。插件按 provider 类型读取对应数据：`xiaomi`（`api.xiaomimimo.com`）只显示按量余额，`xiaomi-token-plan-*`（`token-plan-*.xiaomimimo.com`）只显示 Token Plan 额度。Cookie 获取方式：登录 `platform.xiaomimimo.com`，从任意 `/api/v1/` 请求复制完整的 `Cookie` 请求头，至少包含 `serviceToken` 与 `userId`，然后写入 `$DSH_HOME/.credentials.yaml` 的 `refs` 段：
 
@@ -163,7 +165,7 @@ Moonshot 开放平台（`moonshotai` / `moonshotai-cn`）直接使用推理 Key 
 | `cacheSeconds` | `30` | Host 侧每个配置指纹的成功结果缓存秒数 |
 | `providers` | 自动解析 | 整体覆盖指定 provider 的适配器配置 |
 
-`providers` 的值会整体替换该 provider 的自动解析结果；`kind` 决定适配器，支持 `account`、`deepseek`、`glm`、`kimi`、`xiaomi-mimo`。自定义 GLM/Kimi 代理应同时显式填写 `endpoint` 和 `keyNames`；`xiaomi-mimo` 的 `endpoint` 是控制台 API 基地址，`keyNames` 是 Cookie 凭据引用。
+`providers` 的值会整体替换该 provider 的自动解析结果；`kind` 决定适配器，支持 `account`、`deepseek`、`glm`、`kimi`、`openrouter`、`vercel-gateway`、`xiaomi-mimo`。自定义 GLM/Kimi/OpenRouter/Vercel AI Gateway 代理应同时显式填写 `endpoint` 和 `keyNames`；`xiaomi-mimo` 的 `endpoint` 是控制台 API 基地址，`keyNames` 是 Cookie 凭据引用。
 
 ## 安全
 

@@ -864,6 +864,49 @@ test('reports a missing OpenRouter key and rejects invalid payloads', async (t) 
   assert.match(invalidData.error, /invalid quota response/)
 })
 
+test('reads Vercel AI Gateway credits as a USD balance', async (t) => {
+  const host = createHarness({
+    providers: {
+      vercel: {
+        defaultBaseURL: 'https://ai-gateway.vercel.sh/v1',
+        nativeEnv: ['AI_GATEWAY_API_KEY'],
+      },
+    },
+    keys: { AI_GATEWAY_API_KEY: 'gateway-key' },
+  })
+  const calls = mockFetch(t, async () => json({ balance: '95.50', total_used: '4.50' }))
+
+  const data = await body(await host.request('vercel'))
+  assert.equal(data.ok, true)
+  assert.equal(data.kind, 'vercel-gateway')
+  assert.equal(data.currency, 'USD')
+  assert.equal(data.amount, '95.50')
+  assert.equal(data.totalUsage, '4.50')
+  assert.equal(calls[0].url, 'https://ai-gateway.vercel.sh/v1/credits')
+  assert.equal(calls[0].init.headers.Authorization, 'Bearer gateway-key')
+})
+
+test('reports a missing Vercel AI Gateway key and rejects invalid payloads', async (t) => {
+  const providers = {
+    vercel: {
+      defaultBaseURL: 'https://ai-gateway.vercel.sh/v1',
+      nativeEnv: ['AI_GATEWAY_API_KEY'],
+    },
+  }
+  const missing = createHarness({ providers, keys: {} })
+  let calls = mockFetch(t, async () => json({ balance: '95.50' }))
+  const missingData = await body(await missing.request('vercel'))
+  assert.equal(missingData.reason, 'missing-credential')
+  assert.equal(calls.length, 0)
+
+  const invalid = createHarness({ providers, keys: { AI_GATEWAY_API_KEY: 'gateway-key' } })
+  calls = mockFetch(t, async () => json({}))
+  const invalidData = await body(await invalid.request('vercel'))
+  assert.equal(invalidData.ok, false)
+  assert.equal(invalidData.reason, 'error')
+  assert.match(invalidData.error, /invalid quota response/)
+})
+
 test('reads only the billing mode that matches the MiMo provider', async (t) => {
   const host = createHarness({
     providers: {

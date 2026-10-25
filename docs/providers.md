@@ -24,6 +24,7 @@
 | `api.moonshot.cn` | `moonshot` | `https://api.moonshot.cn/v1/users/me/balance` |
 | `api.moonshot.ai` | `moonshot` | `https://api.moonshot.ai/v1/users/me/balance` |
 | `openrouter.ai` | `openrouter` | `https://openrouter.ai/api/v1/credits` |
+| `ai-gateway.vercel.sh` | `vercel-gateway` | `https://ai-gateway.vercel.sh/v1/credits` |
 
 因此，DSH 默认的 `zai-coding-cn` 会走 `open.bigmodel.cn`，而 `zai` 会走 `api.z.ai`。如果用户显式修改 `baseURL`，插件跟随修改后的已知主机，不复用旧端点缓存。
 
@@ -111,6 +112,37 @@ Authorization: Bearer <实时凭证引用对应的 Key>
 - 剩余额度 = `total_credits - total_usage`，最小为 0；币种固定为 USD。
 - `total_credits` 缺失时按临时失败处理；`total_usage` 缺失按 0 处理。
 - 该接口返回账户级额度，不是单个 Key 的消费上限；单 Key 的 `limit` / `limit_remaining` 在 `/api/v1/key`，当前版本不展示。
+
+## Vercel AI Gateway（按量余额）
+
+DSH 中把 Vercel AI Gateway 作为 provider 时，推理主机为 `ai-gateway.vercel.sh`，凭证引用通常是 `AI_GATEWAY_API_KEY`：
+
+```http
+GET https://ai-gateway.vercel.sh/v1/credits
+Authorization: Bearer <实时凭证引用对应的 AI Gateway API Key>
+```
+
+返回（字段有裁剪）：
+
+```json
+{
+  "balance": "95.50",
+  "total_used": "4.50"
+}
+```
+
+字段含义：
+
+| 字段 | 含义 |
+| --- | --- |
+| `balance` | API Key 所属团队的剩余 AI Gateway Credits，单位 USD |
+| `total_used` | 团队累计消耗，单位 USD |
+
+注意：
+
+- 额度属于 API Key 所属团队，不需要额外传 team id。
+- `balance` 缺失时按临时失败处理；`total_used` 缺失时不显示「已使用」。
+- Vercel 部署也可以使用 OIDC token，但本插件只读取 DSH 凭据库中的 API Key，不读取 `VERCEL_OIDC_TOKEN`。
 
 ## GLM Coding Plan
 
@@ -482,7 +514,7 @@ x-timezone: Asia/Shanghai
         keyNames: [MY_KIMI_KEY]
 ```
 
-`kind` 必须是已有适配器：`account`、`deepseek`、`glm`、`kimi`、`minimax`、`moonshot`、`openrouter`、`qwen`、`xiaomi-mimo`。某个 provider 的显式配置会整体替代自动解析结果，因此自定义 GLM/Kimi/MiniMax/Moonshot/OpenRouter 应同时提供 `endpoint` 和 `keyNames`；`xiaomi-mimo` 的 `endpoint` 是控制台 API 基地址（默认 `https://platform.xiaomimimo.com/api/v1`），`keyNames` 填控制台 Cookie 的凭据引用，`mode` 可选 `balance` 或 `plan`；`qwen` 的 `endpoint` 是控制台 `cli/api.json` 完整地址，`keyNames` 默认取 `QWEN_CONSOLE_TOKEN` / `BAILIAN_CONSOLE_TOKEN`。显式覆盖不要求 DSH 中存在同名激活路由。
+`kind` 必须是已有适配器：`account`、`deepseek`、`glm`、`kimi`、`minimax`、`moonshot`、`openrouter`、`qwen`、`vercel-gateway`、`xiaomi-mimo`。某个 provider 的显式配置会整体替代自动解析结果，因此自定义 GLM/Kimi/MiniMax/Moonshot/OpenRouter/Vercel AI Gateway 应同时提供 `endpoint` 和 `keyNames`；`xiaomi-mimo` 的 `endpoint` 是控制台 API 基地址（默认 `https://platform.xiaomimimo.com/api/v1`），`keyNames` 填控制台 Cookie 的凭据引用，`mode` 可选 `balance` 或 `plan`；`qwen` 的 `endpoint` 是控制台 `cli/api.json` 完整地址，`keyNames` 默认取 `QWEN_CONSOLE_TOKEN` / `BAILIAN_CONSOLE_TOKEN`。显式覆盖不要求 DSH 中存在同名激活路由。
 
 ### 接入新的额度体系
 
