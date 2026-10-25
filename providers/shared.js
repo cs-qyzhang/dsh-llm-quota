@@ -41,7 +41,7 @@ export function withCacheKey(route) {
   return {
     ...route,
     keyNames,
-    cacheKey: JSON.stringify([route.provider, route.kind, route.endpoint ?? '', keyNames]),
+    cacheKey: JSON.stringify([route.provider, route.kind, route.endpoint ?? '', route.mode ?? '', keyNames]),
   }
 }
 

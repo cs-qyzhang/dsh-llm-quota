@@ -11,7 +11,10 @@
 | DeepSeek（账号 / 按量计费） | `余额 ¥65.28` | 充值余额、赠送余额、更新时间 |
 | GLM Coding Plan（Z.AI / 智谱） | `5h 剩 100% · 周 剩 33%` | 套餐等级、5 小时与周额度、重置时间 |
 | Kimi For Coding | `5h 剩 0% · 周 剩 33%` | 5 小时与周额度、重置时间 |
-| Xiaomi MiMo（按量 / Token Plan） | `余额 ¥65.28 · 套餐剩 73%` | 现金/赠送余额、套餐与本月用量、重置时间 |
+| Moonshot 开放平台（按量） | `余额 ¥49.59` | 现金余额、代金券余额、更新时间 |
+| 阿里云百炼 Qwen Token Plan | `套餐剩 50%` | 月度额度、重置时间 |
+| Xiaomi MiMo（按量计费） | `余额 ¥65.28` | 现金/赠送余额、更新时间 |
+| Xiaomi MiMo（Token Plan） | `套餐剩 73%` | 套餐与本月用量、重置时间 |
 | 其它供应商 | 不显示 | — |
 
 - 额度跟随当前会话的模型选择自动切换。
@@ -36,6 +39,10 @@ dsh-llm-quota/
 │   ├── deepseek.js
 │   ├── glm.js
 │   ├── kimi.js
+│   ├── minimax.js
+│   ├── moonshot.js
+│   ├── openrouter.js
+│   ├── qwen.js
 │   └── xiaomi-mimo.js
 ├── client.js             # Client 侧：状态行条目、轮询、展开浮层
 ├── locale/
@@ -119,9 +126,9 @@ npx -y pnpm@10 remove @local/dsh-llm-quota
 
 ## 配置
 
-默认情况下，插件通过 DSH 的 provider directory 和 Loader 实时配置确定凭证引用与推理主机，再映射到固定的额度端点。只有 `api.deepseek.com`、`api.z.ai`、`open.bigmodel.cn`、`api.kimi.com` 和 `*.xiaomimimo.com` 会自动适配；Moonshot、OAuth-only 和未知代理主机不会收到凭证。自定义代理需要显式配置额度端点。
+默认情况下，插件通过 DSH 的 provider directory 和 Loader 实时配置确定凭证引用与推理主机，再映射到固定的额度端点。只有 `api.deepseek.com`、`api.z.ai`、`open.bigmodel.cn`、`api.kimi.com`、`api.moonshot.cn`、`api.moonshot.ai`、`token-plan.*.maas.aliyuncs.com` 和 `*.xiaomimimo.com` 会自动适配；OAuth-only 和未知代理主机不会收到凭证。自定义代理需要显式配置额度端点。
 
-Xiaomi MiMo 需要两份凭证：推理 Key 放在 `XIAOMI_API_KEY`（模型路由使用），额度 Cookie 放在 `MIMO_COOKIE`（读取余额与 Token Plan）。Cookie 获取方式：登录 `platform.xiaomimimo.com`，从任意 `/api/v1/` 请求复制完整的 `Cookie` 请求头，至少包含 `serviceToken` 与 `userId`，然后写入 `$DSH_HOME/.credentials.yaml` 的 `refs` 段：
+Xiaomi MiMo 需要两份凭证：推理 Key 放在 `XIAOMI_API_KEY`（模型路由使用），额度 Cookie 放在 `MIMO_COOKIE`。插件按 provider 类型读取对应数据：`xiaomi`（`api.xiaomimimo.com`）只显示按量余额，`xiaomi-token-plan-*`（`token-plan-*.xiaomimimo.com`）只显示 Token Plan 额度。Cookie 获取方式：登录 `platform.xiaomimimo.com`，从任意 `/api/v1/` 请求复制完整的 `Cookie` 请求头，至少包含 `serviceToken` 与 `userId`，然后写入 `$DSH_HOME/.credentials.yaml` 的 `refs` 段：
 
 ```yaml
 refs:
@@ -130,6 +137,8 @@ refs:
 ```
 
 只追加这一行，保留已有的 `records` 与其他 refs 不动；也可以改用环境变量 `MIMO_COOKIE`。Cookie 过期后重新复制。完整步骤见 [providers.md](./providers.md#xiaomi-mimo-开放平台按量余额--token-plan)。
+
+Moonshot 开放平台（`moonshotai` / `moonshotai-cn`）直接使用推理 Key 读取 `/v1/users/me/balance`，不需要额外配置。Qwen Token Plan 的 `sk-sp-*` 推理 Key 不能查询套餐额度，需要额外提供控制台 access token（凭据名 `QWEN_CONSOLE_TOKEN`），获取方式见 [providers.md](./providers.md#阿里云百炼-qwen-token-plan)。
 
 插件行支持可选的 `config`：
 

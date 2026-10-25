@@ -17,11 +17,13 @@ import * as deepseek from './deepseek.js'
 import * as glm from './glm.js'
 import * as kimi from './kimi.js'
 import * as minimax from './minimax.js'
+import * as moonshot from './moonshot.js'
 import * as openrouter from './openrouter.js'
+import * as qwen from './qwen.js'
 import * as xiaomiMimo from './xiaomi-mimo.js'
 import { withCacheKey } from './shared.js'
 
-const ADAPTERS = [account, deepseek, glm, kimi, minimax, openrouter, xiaomiMimo]
+const ADAPTERS = [account, deepseek, glm, kimi, minimax, moonshot, openrouter, qwen, xiaomiMimo]
 
 const ADAPTER_BY_KIND = new Map(ADAPTERS.map((adapter) => [adapter.kind, adapter]))
 

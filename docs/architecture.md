@@ -20,9 +20,12 @@ dsh Host
     ├─ DeepSeek API Key → GET api.deepseek.com/user/balance
     ├─ Z.AI / 智谱      → GET <对应主机>/api/monitor/usage/quota/limit
     ├─ Kimi Coding      → GET api.kimi.com/coding/v1/usages
+    ├─ Moonshot 按量    → GET api.moonshot.cn|api.moonshot.ai/v1/users/me/balance
     ├─ MiniMax Plan     → GET api.minimax.io|api.minimaxi.com/v1/token_plan/remains
     ├─ OpenRouter       → GET openrouter.ai/api/v1/credits
-    └─ Xiaomi MiMo      → GET platform.xiaomimimo.com/api/v1/{balance,tokenPlan/usage}
+    ├─ Qwen Token Plan  → POST <控制台网关> tokenplan/personal/api/v2/usage
+    ├─ Xiaomi MiMo 按量 → GET platform.xiaomimimo.com/api/v1/{balance,userProfile}
+    └─ Xiaomi MiMo 套餐 → GET platform.xiaomimimo.com/api/v1/tokenPlan/{usage,detail}
     │  ctx.credentials.resolve(<实时凭证引用>)
     │  配置指纹 + 30 秒成功缓存 + 单飞 + 50 条 LRU
     ▼
@@ -39,7 +42,7 @@ dsh Host
 | `cordis.patch.yml` | 插入 `id: llm-quota` 的 Host 插件行 |
 | `index.js` | Host 插件入口：注册 Connection 认证路由、缓存/单飞、错误归一化；供应商细节委托给 `providers/` |
 | `providers/index.js` | 适配器注册表：已知主机 → 额度端点映射、按 `kind` 分发 `readQuota` |
-| `providers/resolve.js` | 读取 DSH 实时 provider 配置，把 provider id 解析成额度路由（含 `config.providers` 覆盖） |
+| `providers/resolve.js` | 读取 DSH 实时 provider 配置，把 provider id 解析成额度路由（含 `config.providers` 覆盖与 MiMo 计费类型） |
 | `providers/shared.js` | 适配器共享工具：凭证读取、上游 HTTP、缓存指纹、统一响应片段 |
 | `providers/*.js` | 单个额度体系适配器（`account`、`deepseek`、`glm`、`kimi`、`minimax`、`openrouter`、`xiaomi-mimo`） |
 | `client.js` | Client 插件：注册 locale 字典、向 composer dock 注册条目、模型选择标签/分组标题的额度装饰、轮询、渲染浮层 |
@@ -79,8 +82,8 @@ export function apply(ctx, config) { ... }
 1. 读取 `provider` 查询参数；为空时回退到 `ctx.get('agentDefaultModel').currentSelection().provider`，再回退到 `deepseek-account`。
 2. `config.providers` 精确覆盖优先；否则要求 provider 已在 DSH 激活，并从 LLM directory 与 Loader entry 读取实时配置。
 3. pi-ai 使用显式 `profile.apiKeyEnv ?? directory.nativeAuth.env` 与 `profile.baseURL ?? directory.defaultBaseURL`；DeepSeek API Key 使用自身实时 config 和 `DEEPSEEK_BASE_URL` 回退。
-4. 只把已知 HTTPS 主机映射到固定额度端点；Moonshot、OAuth-only、未知代理和未激活路由不发起上游请求。
-5. 用 `provider + kind + endpoint + keyNames` 生成不含秘密的配置指纹，命中 30 秒成功缓存则直接返回。
+4. 只把已知 HTTPS 主机映射到固定额度端点；Moonshot 映射到开放平台余额接口，Qwen Token Plan 和 Xiaomi MiMo 改走控制台适配器；OAuth-only、未知代理和未激活路由不发起上游请求。
+5. 用 `provider + kind + endpoint + mode + keyNames` 生成不含秘密的配置指纹，命中 30 秒成功缓存则直接返回。
 6. 未命中时共享同指纹的 pending Promise；成功后写入最多 50 条的 LRU，终态失败不写缓存并删除同键旧值。
 7. 临时异常不写缓存；如果有旧成功值，返回旧值并加 `stale: true`，否则返回 `ok: false` 和失败原因。
 8. 每次 `readQuota`（含凭证解析、DSH 账号服务与上游 HTTP）有 5 秒总超时；超时按临时失败处理，返回旧成功值并标记 `stale`，或返回 `reason: 'error'`。
@@ -129,17 +132,63 @@ MiniMax 型：
 }
 ```
 
-Xiaomi MiMo 型：
+Moonshot 余额型：
+
+```json
+{
+  "ok": true,
+  "provider": "moonshotai-cn",
+  "kind": "balance",
+  "service": "moonshot",
+  "currency": "CNY",
+  "amount": "49.58894",
+  "wallets": [{ "currency": "CNY", "balance": "3.00001" }],
+  "bonusWallets": [{ "currency": "CNY", "balance": "46.58893" }],
+  "available": true,
+  "updatedAt": "2026-10-25T04:34:09.837Z"
+}
+```
+
+Qwen Token Plan 型：
+
+```json
+{
+  "ok": true,
+  "provider": "qwen-token-plan-cn",
+  "kind": "qwen",
+  "plan": {
+    "usedPercent": 50,
+    "remainingPercent": 50,
+    "resetAt": "2026-08-13T00:00:00.000Z"
+  },
+  "updatedAt": "2026-10-25T04:34:09.837Z"
+}
+```
+
+Xiaomi MiMo 型（按量计费）：
 
 ```json
 {
   "ok": true,
   "provider": "xiaomi",
   "kind": "xiaomi-mimo",
+  "mode": "balance",
   "currency": "CNY",
   "amount": "65.27",
   "cashBalance": "60.00",
   "giftBalance": "5.27",
+  "updatedAt": "2026-10-25T04:34:09.837Z"
+}
+```
+
+Xiaomi MiMo 型（Token Plan）：
+
+```json
+{
+  "ok": true,
+  "provider": "xiaomi-token-plan-cn",
+  "kind": "xiaomi-mimo",
+  "mode": "plan",
   "plan": {
     "used": 25000000,
     "limit": 100000000,
@@ -152,6 +201,8 @@ Xiaomi MiMo 型：
   "updatedAt": "2026-10-25T04:34:09.837Z"
 }
 ```
+
+`mode` 由 provider 的推理主机决定：`api.xiaomimimo.com` 为 `balance`，`token-plan-*.xiaomimimo.com` 为 `plan`；显式 `config.providers` 覆盖按 provider id 推断。未声明 `mode` 的自定义覆盖仍兼容旧行为，同时返回余额与套餐。
 
 失败：
 
@@ -166,13 +217,14 @@ Xiaomi MiMo 型：
 | `unsupported` | provider 不在映射中；客户端隐藏条目 |
 | `missing-credential` | 找不到任何候选凭证名 |
 | `missing-cookie` | Xiaomi MiMo 控制台 Cookie 未配置 |
+| `missing-console-token` | Qwen Token Plan 控制台 access token 未配置 |
 | `signed-out` | DeepSeek 账号未登录 |
 | `unavailable` | 当前 profile 没有对应服务 |
 | `error` | 网络、HTTP、响应解析或业务错误；`error` 字段带截断后的原因 |
 
 ### 缓存
 
-缓存键是 `provider + kind + endpoint + keyNames` 的配置指纹，不包含凭证值；值是 `{ at, value }`。默认 TTL 30 秒，可由 `config.cacheSeconds` 覆盖。
+缓存键是 `provider + kind + endpoint + mode + keyNames` 的配置指纹，不包含凭证值；值是 `{ at, value }`。默认 TTL 30 秒，可由 `config.cacheSeconds` 覆盖。
 
 - 只缓存 `ok: true` 的结果；`missing-credential`、`signed-out` 等终态不缓存，并删除同键旧成功值。
 - 同指纹请求共享 pending Promise，settle（包括 5 秒超时失败）后清理 pending。

@@ -37,6 +37,8 @@ window.__ModuleLoader__.load({
         missingCookie: '未配置 MiMo 控制台 Cookie',
         signedOut: '请先登录 DeepSeek',
         mimoTitle: 'Xiaomi MiMo',
+        mimoPayg: '按量计费',
+        mimoTokenPlan: 'Token Plan',
         mimoPlanLeft: '套餐剩 {percent}%',
         mimoBalance: '剩余余额',
         mimoCash: '现金余额',
@@ -46,6 +48,12 @@ window.__ModuleLoader__.load({
         mimoMonth: '本月用量',
         mimoCompensation: '补偿积分',
         mimoUsed: '已用 {used} / {limit}（{percent}%）',
+        moonshotTitle: 'Moonshot',
+        qwenTitle: 'Qwen',
+        qwenTokenPlan: 'Token Plan',
+        qwenMonthly: '月度额度',
+        qwenPlanLeft: '套餐剩 {percent}%',
+        missingConsoleToken: '未配置 Qwen 控制台 Token',
         openrouterRemaining: '剩余额度',
         openrouterCredits: '已购买额度',
         openrouterUsage: '已使用',
@@ -77,6 +85,8 @@ window.__ModuleLoader__.load({
         missingCookie: 'MiMo console cookie not configured',
         signedOut: 'Sign in to DeepSeek',
         mimoTitle: 'Xiaomi MiMo',
+        mimoPayg: 'Pay as you go',
+        mimoTokenPlan: 'Token Plan',
         mimoPlanLeft: 'Plan {percent}% left',
         mimoBalance: 'Remaining balance',
         mimoCash: 'Cash balance',
@@ -86,6 +96,12 @@ window.__ModuleLoader__.load({
         mimoMonth: 'This month',
         mimoCompensation: 'Compensation credits',
         mimoUsed: '{used} / {limit} ({percent}% used)',
+        moonshotTitle: 'Moonshot',
+        qwenTitle: 'Qwen',
+        qwenTokenPlan: 'Token Plan',
+        qwenMonthly: 'Monthly quota',
+        qwenPlanLeft: 'Plan {percent}% left',
+        missingConsoleToken: 'Qwen console token not configured',
         openrouterRemaining: 'Credits remaining',
         openrouterCredits: 'Credits purchased',
         openrouterUsage: 'Usage',
@@ -224,6 +240,11 @@ window.__ModuleLoader__.load({
         }
         return mimoParts.length > 0 ? mimoParts.join(' · ') : tr('error')
       }
+      if (data.kind === 'qwen') {
+        return data.plan && Number.isFinite(data.plan.remainingPercent)
+          ? tr('qwenPlanLeft', { percent: data.plan.remainingPercent })
+          : tr('error')
+      }
       const parts = []
       if (data.fiveHour) parts.push(tr('fiveHour', { percent: data.fiveHour.remainingPercent }))
       if (data.weekly) parts.push(tr('weekly', { percent: data.weekly.remainingPercent }))
@@ -243,6 +264,11 @@ window.__ModuleLoader__.load({
         }
         return parts.join(' · ')
       }
+      if (data.kind === 'qwen') {
+        return data.plan && Number.isFinite(data.plan.remainingPercent)
+          ? tr('badgePlan', { percent: data.plan.remainingPercent })
+          : ''
+      }
       const parts = []
       if (data.fiveHour && Number.isFinite(data.fiveHour.remainingPercent)) {
         parts.push(tr('badgeFiveHour', { percent: data.fiveHour.remainingPercent }))
@@ -255,6 +281,9 @@ window.__ModuleLoader__.load({
 
     function panelTitle(data, tr) {
       if (!data || data.ok === false) return tr('title')
+      if (data.kind === 'balance') {
+        return data.service === 'moonshot' ? tr('moonshotTitle') : tr('balanceTitle')
+      }
       if (data.kind === 'glm') return data.level ? `GLM ${capitalise(data.level)}` : 'GLM'
       if (data.kind === 'kimi') return 'Kimi'
       if (data.kind === 'openrouter') return 'OpenRouter'
@@ -262,8 +291,15 @@ window.__ModuleLoader__.load({
         return data.model ? `MiniMax · ${data.model}` : 'MiniMax'
       }
       if (data.kind === 'xiaomi-mimo') {
+        if (data.mode === 'balance') return `${tr('mimoTitle')} · ${tr('mimoPayg')}`
+        if (data.mode === 'plan') {
+          return data.plan?.name
+            ? `${tr('mimoTitle')} · ${tr('mimoTokenPlan')} (${data.plan.name})`
+            : `${tr('mimoTitle')} · ${tr('mimoTokenPlan')}`
+        }
         return data.plan?.name ? `${tr('mimoTitle')} · ${data.plan.name}` : tr('mimoTitle')
       }
+      if (data.kind === 'qwen') return `${tr('qwenTitle')} · ${tr('qwenTokenPlan')}`
       return tr('balanceTitle')
     }
 
@@ -271,6 +307,7 @@ window.__ModuleLoader__.load({
       if (!data) return tr('error')
       if (data.reason === 'missing-credential') return tr('missingCredential')
       if (data.reason === 'missing-cookie') return tr('missingCookie')
+      if (data.reason === 'missing-console-token') return tr('missingConsoleToken')
       if (data.reason === 'signed-out') return tr('signedOut')
       return tr('error')
     }
@@ -533,7 +570,13 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
       if (!data && !state.error) return null
 
       const label = compactLabel(data, tr)
-      const isPlan = data && (data.kind === 'glm' || data.kind === 'kimi' || data.kind === 'minimax' || data.kind === 'xiaomi-mimo')
+      const isPlan = data && (
+        data.kind === 'glm'
+        || data.kind === 'kimi'
+        || data.kind === 'minimax'
+        || data.kind === 'qwen'
+        || (data.kind === 'xiaomi-mimo' && data.mode !== 'balance')
+      )
       const icon = isPlan ? h(GaugeIcon) : h(CoinIcon)
 
       const togglePanel = () => {
@@ -565,6 +608,13 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
           }
           if (typeof data.available === 'boolean') {
             rows.push(detailRow(tr('status'), data.available ? tr('available') : tr('insufficient')))
+          }
+          return rows
+        }
+        if (data.kind === 'qwen') {
+          const rows = []
+          if (data.plan && Number.isFinite(data.plan.remainingPercent)) {
+            rows.push(detailRow(tr('qwenMonthly'), formatWindow(data.plan, tr), resetLabel(data.plan.resetAt, tr)))
           }
           return rows
         }

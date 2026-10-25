@@ -21,13 +21,17 @@
 | `api.kimi.com` | `kimi` | `https://api.kimi.com/coding/v1/usages` |
 | `api.minimax.io` | `minimax` | `https://api.minimax.io/v1/token_plan/remains` |
 | `api.minimaxi.com` | `minimax` | `https://api.minimaxi.com/v1/token_plan/remains` |
+| `api.moonshot.cn` | `moonshot` | `https://api.moonshot.cn/v1/users/me/balance` |
+| `api.moonshot.ai` | `moonshot` | `https://api.moonshot.ai/v1/users/me/balance` |
 | `openrouter.ai` | `openrouter` | `https://openrouter.ai/api/v1/credits` |
 
 因此，DSH 默认的 `zai-coding-cn` 会走 `open.bigmodel.cn`，而 `zai` 会走 `api.z.ai`。如果用户显式修改 `baseURL`，插件跟随修改后的已知主机，不复用旧端点缓存。
 
 小米 MiMo 的主机（`api.xiaomimimo.com` 与 `token-plan-*.xiaomimimo.com`）不映射到推理 Key 的额度接口，而是统一走控制台 Cookie 适配器 `xiaomi-mimo`；详见后文。
 
-Moonshot 开放平台、OAuth-only、未知代理、自托管地址和未激活 provider 均返回 `unsupported`，不会向上游发送凭证。自定义代理必须通过 `config.providers` 显式声明额度端点和凭证引用。
+阿里云百炼 Token Plan 的主机（`token-plan.*.maas.aliyuncs.com`）同样不能用推理 Key 查额度，插件改走控制台网关适配器 `qwen`；详见后文。
+
+OAuth-only、未知代理、自托管地址和未激活 provider 均返回 `unsupported`，不会向上游发送凭证。自定义代理必须通过 `config.providers` 显式声明额度端点和凭证引用。
 
 ## DeepSeek 账号（按量计费）
 
@@ -189,6 +193,36 @@ Authorization: Bearer <实时凭证引用对应的 Key>
 - `booster_wallet` 是加油包信息，当前版本不展示。
 - 这是 Kimi For Coding 的接口，不是 Moonshot 开放平台的 `/v1/users/me/balance`。后者只适合按量计费的 Moonshot API Key。
 
+## Moonshot 开放平台（按量余额）
+
+Moonshot 按量计费与 Kimi For Coding 是两套独立产品：`moonshotai` / `moonshotai-cn` 是开放平台余额，`kimi-coding` 是 Coding Plan。插件按推理主机区分，不会把余额数据挂到 Coding Plan 路由上。
+
+```http
+GET https://api.moonshot.cn/v1/users/me/balance
+GET https://api.moonshot.ai/v1/users/me/balance
+Authorization: Bearer <实时 MOONSHOT_API_KEY>
+```
+
+返回（字段有裁剪）：
+
+```json
+{
+  "code": 0,
+  "data": {
+    "available_balance": 49.58894,
+    "voucher_balance": 46.58893,
+    "cash_balance": 3.00001
+  },
+  "scode": "0x0",
+  "status": true
+}
+```
+
+- `available_balance` 是可用总额（现金 + 代金券），作为状态行主金额。
+- `cash_balance` 显示为「充值余额」，`voucher_balance` 显示为「赠送余额」。
+- `.cn` 主机按 CNY 显示，`.ai` 主机按 USD 显示。
+- `code` 非 0 或 `status: false` 按业务错误处理；`missing-credential` 是终态，客户端显示「未配置 API Key」。
+
 ## MiniMax Coding Plan / M Plan
 
 DSH 的 `minimax` 与 `minimax-cn` 使用订阅 Key（`MINIMAX_API_KEY` / `MINIMAX_CN_API_KEY`），额度按「prompt 次数」计算，分为动态 5 小时窗口与周窗口：
@@ -240,9 +274,66 @@ Authorization: Bearer <实时凭证引用对应的 Key>
 - 新 M Plan 使用 `/v1/token_plan/remains`，旧 Coding Plan 使用 `/v1/coding_plan/remains`；两个端点响应结构相同。同一个 Key 不一定被两者都接受，插件在业务错误时自动尝试同一主机下的另一个端点。自定义 `config.providers` 的 `endpoint` 不在上述两个路径时不做回退。
 - `base_resp.status_code` 非 0 按业务错误处理；`missing-credential` 是终态，客户端显示「未配置 API Key」。
 
-## Xiaomi MiMo 开放平台（按量余额 + Token Plan）
+## 阿里云百炼 Qwen Token Plan
 
-MiMo 的余额和 Token Plan 额度只有控制台接口，推理 Key（`sk-*`）和 Token Plan Key（`tp-*` / `ttp-*`）都不能查询。插件因此读取**控制台 Cookie**，凭据引用默认为 `MIMO_COOKIE`，也兼容 `XIAOMI_MIMO_COOKIE`。
+DSH 的 `qwen-token-plan`、`qwen-token-plan-cn`、`qwen-token-plan-individual` 使用 Token Plan 专属推理 Key（`sk-sp-*`）。该 Key 只能调用模型，不能查询套餐额度；额度必须通过控制台网关读取。插件复用官方 Model Studio CLI 的控制台 API，因此需要额外的**控制台 access token**，而不是推理 Key。
+
+获取方式：
+
+1. 安装并登录官方 CLI：`bl auth login --console`。
+2. 从 `~/.bailian/config.json` 复制 `access_token`，写入 DSH 凭据库的 `QWEN_CONSOLE_TOKEN`（也兼容 `BAILIAN_CONSOLE_TOKEN`）。
+
+```yaml
+refs:
+  QWEN_TOKEN_PLAN_CN_API_KEY: sk-sp-...
+  QWEN_CONSOLE_TOKEN: "..."
+```
+
+> 控制台 token 的权限高于推理 Key，请只在可信机器上保存。
+
+插件按推理主机选择控制台网关：
+
+| DSH provider | 推理主机 | 控制台网关 | region |
+| --- | --- | --- | --- |
+| `qwen-token-plan-cn` | `token-plan.cn-beijing.maas.aliyuncs.com` | `bailian-cs.console.aliyun.com` | `cn-beijing` |
+| `qwen-token-plan` / `qwen-token-plan-individual` | `token-plan.ap-southeast-1.maas.aliyuncs.com` | `bailian-singapore-cs.alibabacloud.com` | `ap-southeast-1` |
+
+请求（与官方 CLI 相同的控制台接口）：
+
+```http
+POST https://bailian-cs.console.aliyun.com/cli/api.json?action=BroadScopeAspnGateway&product=sfm_bailian&api=...
+Authorization: Bearer <控制台 access token>
+Content-Type: application/x-www-form-urlencoded
+```
+
+返回（字段有裁剪）：
+
+```json
+{
+  "data": {
+    "DataV2": {
+      "data": {
+        "data": {
+          "per1MonthPercentage": 0.5,
+          "per1MonthResetTime": 1786000000000
+        }
+      }
+    }
+  }
+}
+```
+
+- `per1MonthPercentage` 是 0–1 的**已用**比例，剩余 = `100 - 已用`。
+- `per1MonthResetTime` 是毫秒时间戳；为 0 或缺省时不显示重置时间。
+- 状态行显示「套餐剩 X%」，展开面板显示月度额度与重置时间。
+- 控制台 token 缺失时返回 `missing-console-token`，客户端显示「未配置 Qwen 控制台 Token」。
+- 国内账号使用新加坡套餐时，可在 `config.providers` 显式覆盖 `endpoint` 指向 `https://modelstudio-cs.console.aliyun.com/cli/api.json?action=IntlBroadScopeAspnGateway&product=sfm_bailian&api=...`，并设置 `keyNames: [QWEN_CONSOLE_TOKEN]`。
+
+## Xiaomi MiMo 开放平台（按量余额 / Token Plan）
+
+MiMo 的按量计费与 Token Plan 是两套独立产品，对应不同的 DSH provider：`xiaomi`（推理主机 `api.xiaomimimo.com`）和 `xiaomi-token-plan-*`（推理主机 `token-plan-*.xiaomimimo.com`）。余额和 Token Plan 额度只有控制台接口，推理 Key（`sk-*`）和 Token Plan Key（`tp-*` / `ttp-*`）都不能查询。插件因此读取**控制台 Cookie**，凭据引用默认为 `MIMO_COOKIE`，也兼容 `XIAOMI_MIMO_COOKIE`。
+
+插件按 provider 类型选择数据源：按量计费只读取余额，Token Plan 只读取套餐额度，不会把两套数据混在一起显示。
 
 获取方式：登录 `platform.xiaomimimo.com`，打开开发者工具 → Network，找到任意 `/api/v1/` 请求，复制完整的 `Cookie` 请求头（至少包含 `serviceToken` 与 `userId`），写入 DSH 凭据库。Cookie 过期后重新复制。
 
@@ -266,7 +357,7 @@ MiMo 需要两份互不替代的凭证：推理 Key（`sk-*`）用于实际调�
         apiKeyEnv: XIAOMI_TOKEN_PLAN_CN_API_KEY
 ```
 
-只用按量接口时只保留 `xiaomi`；Token Plan 路由按需添加，Key 使用 `tp-*` / `ttp-*`。
+只用按量接口时只保留 `xiaomi`；Token Plan 路由按需添加，Key 使用 `tp-*` / `ttp-*`。插件根据推理主机自动区分：`api.xiaomimimo.com` 只显示余额，`token-plan-*.xiaomimimo.com` 只显示套餐额度。
 
 **2. 额度 Cookie**
 
@@ -284,7 +375,7 @@ refs:
 
 **3. 不需要给 llm-quota 增加配置**
 
-只要推理 `baseURL` 的主机属于 `*.xiaomimimo.com`，插件会自动走控制台 Cookie 适配器。只有想换 Cookie 凭据名或走代理时才需要显式覆盖：
+只要推理 `baseURL` 的主机属于 `*.xiaomimimo.com`，插件会自动走控制台 Cookie 适配器并推断计费类型。只有想换 Cookie 凭据名、走代理或自定义 provider 名时才需要显式覆盖：
 
 ```yaml
 - id: llm-quota
@@ -293,26 +384,43 @@ refs:
     providers:
       xiaomi:
         kind: xiaomi-mimo
+        mode: balance
+        endpoint: https://platform.xiaomimimo.com/api/v1
+        keyNames: [MY_MIMO_COOKIE]
+      my-token-plan:
+        kind: xiaomi-mimo
+        mode: plan
         endpoint: https://platform.xiaomimimo.com/api/v1
         keyNames: [MY_MIMO_COOKIE]
 ```
 
-显式覆盖会整体替换自动解析结果，因此 `endpoint` 与 `keyNames` 都要写。pi-ai 的 provider profile 没有 `cookieEnv` 字段，自定义 Cookie 名请用这里的 `llm-quota.config.providers`，不要写进 `llm-pi-ai.providers.xiaomi`。
+显式覆盖会整体替换自动解析结果，因此 `endpoint` 与 `keyNames` 都要写。`mode` 可选值为 `balance`（只查余额）或 `plan`（只查 Token Plan）；不写时按 provider id 推断，识别不出则保留旧的「余额 + 套餐」行为。pi-ai 的 provider profile 没有 `cookieEnv` 字段，自定义 Cookie 名请用这里的 `llm-quota.config.providers`，不要写进 `llm-pi-ai.providers.xiaomi`。
 
 **4. 生效与验证**
 
 重启 dsh 或刷新页面，在已有会话中查看输入框下方的状态行；未配置 Cookie 时会显示「未配置 MiMo 控制台 Cookie」。
 
-适配器会并行请求以下控制台接口（均需 Cookie）：
+适配器按 provider 类型并行请求对应控制台接口（均需 Cookie）：
+
+按量计费（`mode: balance`）：
 
 ```http
 GET https://platform.xiaomimimo.com/api/v1/balance
-GET https://platform.xiaomimimo.com/api/v1/tokenPlan/usage
-GET https://platform.xiaomimimo.com/api/v1/tokenPlan/detail
 GET https://platform.xiaomimimo.com/api/v1/userProfile
 Cookie: serviceToken=<...>; userId=<...>
 x-timezone: Asia/Shanghai
 ```
+
+Token Plan（`mode: plan`）：
+
+```http
+GET https://platform.xiaomimimo.com/api/v1/tokenPlan/usage
+GET https://platform.xiaomimimo.com/api/v1/tokenPlan/detail
+Cookie: serviceToken=<...>; userId=<...>
+x-timezone: Asia/Shanghai
+```
+
+未指定 `mode` 的显式自定义覆盖仍会同时请求以上四个接口。
 
 返回（字段有裁剪）：
 
@@ -342,13 +450,16 @@ x-timezone: Asia/Shanghai
 }
 ```
 
+- 按量计费只返回 `amount`、`cashBalance`、`giftBalance`、`frozenBalance` 与 `currency`，不再附带 `plan`。
+- Token Plan 只返回 `plan`，不再附带余额字段。
+- 响应中的 `mode`（`balance` / `plan`）供客户端区分标题与图标；未指定模式的自定义覆盖不返回该字段。
 - `balance` 是剩余总额，`cashBalance` 与 `giftBalance` 是拆分项；`amount` 取 `balance`，缺失时回退 `cashBalance`。
-- 币种按 `userProfile.idc` 判断：`310` 为 `CNY`，其他为 `USD`。
+- 币种按 `userProfile.idc` 判断：`310` 为 `CNY`，其他为 `USD`；Token Plan 模式不请求 `userProfile`。
 - `usage.items` 中的 `plan_total_token` 是套餐窗口，`compensation_total_token` 是补偿积分；`monthUsage.items` 中的 `month_total_token` 是本月用量。
 - `percent` 是 0–1 的小数；插件优先用 `used / limit` 计算百分比，字段缺失时回退 `percent`。
 - `tokenPlan/detail` 提供 `planName` 与 `currentPeriodEnd`，后者作为套餐窗口的重置时间。
-- 余额或套餐任一可用即返回成功；两者都无法识别时按临时失败处理。`missing-cookie` 是终态，客户端显示「未配置 MiMo 控制台 Cookie」。
-- 自动解析覆盖 `xiaomi`、`xiaomi-token-plan-cn`、`xiaomi-token-plan-sgp`、`xiaomi-token-plan-ams` 等已知主机；自定义代理可在 `config.providers` 中用 `kind: xiaomi-mimo` 显式指定 `endpoint`（控制台 API 基地址）和 `keyNames`。
+- 对应模式的接口可用即返回成功；按量模式无余额、Token Plan 模式无套餐窗口时按临时失败处理。`missing-cookie` 是终态，客户端显示「未配置 MiMo 控制台 Cookie」。
+- 自动解析覆盖 `xiaomi`、`xiaomi-token-plan-cn`、`xiaomi-token-plan-sgp`、`xiaomi-token-plan-ams` 等已知主机，并按主机推断 `mode`；自定义代理可在 `config.providers` 中用 `kind: xiaomi-mimo` 显式指定 `mode`、`endpoint`（控制台 API 基地址）和 `keyNames`。
 
 ## 自定义或增加 provider
 
@@ -371,7 +482,7 @@ x-timezone: Asia/Shanghai
         keyNames: [MY_KIMI_KEY]
 ```
 
-`kind` 必须是已有适配器：`account`、`deepseek`、`glm`、`kimi`、`minimax`、`openrouter`、`xiaomi-mimo`。某个 provider 的显式配置会整体替代自动解析结果，因此自定义 GLM/Kimi/MiniMax/OpenRouter 应同时提供 `endpoint` 和 `keyNames`；`xiaomi-mimo` 的 `endpoint` 是控制台 API 基地址（默认 `https://platform.xiaomimimo.com/api/v1`），`keyNames` 填控制台 Cookie 的凭据引用。显式覆盖不要求 DSH 中存在同名激活路由。
+`kind` 必须是已有适配器：`account`、`deepseek`、`glm`、`kimi`、`minimax`、`moonshot`、`openrouter`、`qwen`、`xiaomi-mimo`。某个 provider 的显式配置会整体替代自动解析结果，因此自定义 GLM/Kimi/MiniMax/Moonshot/OpenRouter 应同时提供 `endpoint` 和 `keyNames`；`xiaomi-mimo` 的 `endpoint` 是控制台 API 基地址（默认 `https://platform.xiaomimimo.com/api/v1`），`keyNames` 填控制台 Cookie 的凭据引用，`mode` 可选 `balance` 或 `plan`；`qwen` 的 `endpoint` 是控制台 `cli/api.json` 完整地址，`keyNames` 默认取 `QWEN_CONSOLE_TOKEN` / `BAILIAN_CONSOLE_TOKEN`。显式覆盖不要求 DSH 中存在同名激活路由。
 
 ### 接入新的额度体系
 

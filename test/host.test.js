@@ -318,9 +318,9 @@ test('resolves deepseek-official live credentials and launch-environment baseURL
 test('does not call upstream for unsupported, inactive, unknown, or OAuth-only routes', async (t) => {
   const host = createHarness({
     providers: {
-      moonshotai: {
-        defaultBaseURL: 'https://api.moonshot.cn/v1',
-        nativeEnv: ['MOONSHOT_API_KEY'],
+      openai: {
+        defaultBaseURL: 'https://api.openai.com/v1',
+        nativeEnv: ['OPENAI_API_KEY'],
       },
       'proxy-kimi': {
         baseURL: 'https://proxy.example.test/coding',
@@ -337,12 +337,12 @@ test('does not call upstream for unsupported, inactive, unknown, or OAuth-only r
         nativeEnv: ['KIMI_API_KEY'],
       },
     },
-    activeProviders: ['moonshotai', 'proxy-kimi', 'oauth-kimi'],
-    keys: { MOONSHOT_API_KEY: 'moonshot', KIMI_API_KEY: 'kimi' },
+    activeProviders: ['openai', 'proxy-kimi', 'oauth-kimi'],
+    keys: { OPENAI_API_KEY: 'openai', KIMI_API_KEY: 'kimi' },
   })
   const calls = mockFetch(t, async () => json(KIMI_RESPONSE))
 
-  for (const provider of ['moonshotai', 'proxy-kimi', 'oauth-kimi', 'inactive', 'kimi-forged-alias']) {
+  for (const provider of ['openai', 'proxy-kimi', 'oauth-kimi', 'inactive', 'kimi-forged-alias']) {
     const data = await body(await host.request(provider))
     assert.equal(data.ok, false, provider)
     assert.equal(data.reason, 'unsupported', provider)
@@ -864,7 +864,7 @@ test('reports a missing OpenRouter key and rejects invalid payloads', async (t) 
   assert.match(invalidData.error, /invalid quota response/)
 })
 
-test('reads Xiaomi MiMo balance and Token Plan quota with the console cookie', async (t) => {
+test('reads only the billing mode that matches the MiMo provider', async (t) => {
   const host = createHarness({
     providers: {
       xiaomi: {
@@ -875,11 +875,16 @@ test('reads Xiaomi MiMo balance and Token Plan quota with the console cookie', a
         defaultBaseURL: 'https://token-plan-cn.xiaomimimo.com/v1',
         nativeEnv: ['XIAOMI_TOKEN_PLAN_CN_API_KEY'],
       },
+      'xiaomi-token-plan-sgp': {
+        defaultBaseURL: 'https://token-plan-sgp.xiaomimimo.com/v1',
+        nativeEnv: ['XIAOMI_TOKEN_PLAN_SGP_API_KEY'],
+      },
     },
     keys: {
       MIMO_COOKIE: 'serviceToken=secret-token; userId=42',
       XIAOMI_API_KEY: 'sk-inference',
       XIAOMI_TOKEN_PLAN_CN_API_KEY: 'tp-plan',
+      XIAOMI_TOKEN_PLAN_SGP_API_KEY: 'tp-plan-sgp',
     },
   })
   const calls = mockFetch(t, async (url) => {
@@ -913,14 +918,28 @@ test('reads Xiaomi MiMo balance and Token Plan quota with the console cookie', a
     return json({ code: 404 }, 404)
   })
 
-  for (const provider of ['xiaomi', 'xiaomi-token-plan-cn']) {
+  const balance = await body(await host.request('xiaomi'))
+  assert.equal(balance.ok, true)
+  assert.equal(balance.kind, 'xiaomi-mimo')
+  assert.equal(balance.mode, 'balance')
+  assert.equal(balance.currency, 'CNY')
+  assert.equal(balance.amount, '12.34')
+  assert.equal(balance.cashBalance, '10.00')
+  assert.equal(balance.giftBalance, '2.34')
+  assert.equal(balance.plan, undefined)
+
+  assert.deepEqual(calls.map((call) => call.url), [
+    'https://platform.xiaomimimo.com/api/v1/balance',
+    'https://platform.xiaomimimo.com/api/v1/userProfile',
+  ])
+
+  for (const provider of ['xiaomi-token-plan-cn', 'xiaomi-token-plan-sgp']) {
     const data = await body(await host.request(provider))
     assert.equal(data.ok, true, provider)
     assert.equal(data.kind, 'xiaomi-mimo', provider)
-    assert.equal(data.currency, 'CNY', provider)
-    assert.equal(data.amount, '12.34', provider)
-    assert.equal(data.cashBalance, '10.00', provider)
-    assert.equal(data.giftBalance, '2.34', provider)
+    assert.equal(data.mode, 'plan', provider)
+    assert.equal(data.amount, undefined, provider)
+    assert.equal(data.cashBalance, undefined, provider)
     assert.equal(data.plan.usedPercent, 25, provider)
     assert.equal(data.plan.remainingPercent, 75, provider)
     assert.equal(data.plan.used, 25, provider)
@@ -929,7 +948,12 @@ test('reads Xiaomi MiMo balance and Token Plan quota with the console cookie', a
     assert.equal(data.plan.month.usedPercent, 10, provider)
   }
 
-  assert.equal(calls.length, 8)
+  assert.deepEqual(calls.slice(2).map((call) => call.url), [
+    'https://platform.xiaomimimo.com/api/v1/tokenPlan/usage',
+    'https://platform.xiaomimimo.com/api/v1/tokenPlan/detail',
+    'https://platform.xiaomimimo.com/api/v1/tokenPlan/usage',
+    'https://platform.xiaomimimo.com/api/v1/tokenPlan/detail',
+  ])
   for (const call of calls) {
     assert.match(call.url, /^https:\/\/platform\.xiaomimimo\.com\/api\/v1\//)
     assert.equal(call.init.headers.Cookie, 'serviceToken=secret-token; userId=42')
@@ -955,7 +979,7 @@ test('reports a missing MiMo console cookie without calling upstream', async (t)
   assert.equal(calls.length, 0)
 })
 
-test('keeps MiMo balance when the Token Plan endpoint fails', async (t) => {
+test('reads MiMo pay-as-you-go balance without requesting Token Plan', async (t) => {
   const host = createHarness({
     providers: {
       xiaomi: {
@@ -965,7 +989,7 @@ test('keeps MiMo balance when the Token Plan endpoint fails', async (t) => {
     },
     keys: { MIMO_COOKIE: 'userId=42' },
   })
-  mockFetch(t, async (url) => {
+  const calls = mockFetch(t, async (url) => {
     const target = String(url)
     if (target.endsWith('/balance')) {
       return json({ code: 0, data: { balance: '8.00', cashBalance: '8.00' } })
@@ -976,9 +1000,14 @@ test('keeps MiMo balance when the Token Plan endpoint fails', async (t) => {
 
   const data = await body(await host.request('xiaomi'))
   assert.equal(data.ok, true)
+  assert.equal(data.mode, 'balance')
   assert.equal(data.amount, '8.00')
   assert.equal(data.currency, 'USD')
   assert.equal(data.plan, undefined)
+  assert.deepEqual(calls.map((call) => call.url), [
+    'https://platform.xiaomimimo.com/api/v1/balance',
+    'https://platform.xiaomimimo.com/api/v1/userProfile',
+  ])
 })
 
 test('treats a rejected MiMo console cookie as a temporary error', async (t) => {
@@ -997,5 +1026,144 @@ test('treats a rejected MiMo console cookie as a temporary error', async (t) => 
   assert.equal(data.ok, false)
   assert.equal(data.reason, 'error')
   assert.match(data.error, /HTTP 401/)
-  assert.equal(calls.length, 4)
+  assert.equal(calls.length, 2)
+})
+
+test('reads the Moonshot pay-as-you-go balance for both regions', async (t) => {
+  const host = createHarness({
+    providers: {
+      'moonshotai-cn': {
+        defaultBaseURL: 'https://api.moonshot.cn/v1',
+        nativeEnv: ['MOONSHOT_API_KEY'],
+      },
+      moonshotai: {
+        defaultBaseURL: 'https://api.moonshot.ai/v1',
+        nativeEnv: ['MOONSHOT_API_KEY'],
+      },
+    },
+    keys: { MOONSHOT_API_KEY: 'ms-key' },
+  })
+  const calls = mockFetch(t, async () => json({
+    code: 0,
+    data: { available_balance: 49.58894, voucher_balance: 46.58893, cash_balance: 3.00001 },
+    scode: '0x0',
+    status: true,
+  }))
+
+  const cn = await body(await host.request('moonshotai-cn'))
+  assert.equal(cn.ok, true)
+  assert.equal(cn.kind, 'balance')
+  assert.equal(cn.service, 'moonshot')
+  assert.equal(cn.currency, 'CNY')
+  assert.equal(cn.amount, '49.58894')
+  assert.equal(cn.wallets[0].balance, '3.00001')
+  assert.equal(cn.bonusWallets[0].balance, '46.58893')
+  assert.equal(cn.available, true)
+
+  const global = await body(await host.request('moonshotai'))
+  assert.equal(global.ok, true)
+  assert.equal(global.currency, 'USD')
+
+  assert.deepEqual(calls.map((call) => call.url), [
+    'https://api.moonshot.cn/v1/users/me/balance',
+    'https://api.moonshot.ai/v1/users/me/balance',
+  ])
+  assert.equal(calls[0].init.headers.Authorization, 'Bearer ms-key')
+})
+
+test('reports a missing Moonshot key and rejects invalid payloads', async (t) => {
+  const missing = createHarness({
+    providers: {
+      'moonshotai-cn': {
+        defaultBaseURL: 'https://api.moonshot.cn/v1',
+        nativeEnv: ['MOONSHOT_API_KEY'],
+      },
+    },
+    keys: {},
+  })
+  let calls = mockFetch(t, async () => json({ code: 0, data: {} }))
+  const missingData = await body(await missing.request('moonshotai-cn'))
+  assert.equal(missingData.ok, false)
+  assert.equal(missingData.reason, 'missing-credential')
+  assert.equal(calls.length, 0)
+
+  const invalid = createHarness({
+    providers: {
+      'moonshotai-cn': {
+        defaultBaseURL: 'https://api.moonshot.cn/v1',
+        nativeEnv: ['MOONSHOT_API_KEY'],
+      },
+    },
+    keys: { MOONSHOT_API_KEY: 'ms-key' },
+  })
+  calls = mockFetch(t, async () => json({ code: 0, data: {} }))
+  const invalidData = await body(await invalid.request('moonshotai-cn'))
+  assert.equal(invalidData.ok, false)
+  assert.equal(invalidData.reason, 'error')
+  assert.match(invalidData.error, /invalid quota response/)
+})
+
+test('reads Qwen Token Plan usage through the console gateway', async (t) => {
+  const host = createHarness({
+    providers: {
+      'qwen-token-plan-cn': {
+        defaultBaseURL: 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
+        nativeEnv: ['QWEN_TOKEN_PLAN_CN_API_KEY'],
+      },
+      'qwen-token-plan': {
+        defaultBaseURL: 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
+        nativeEnv: ['QWEN_TOKEN_PLAN_API_KEY'],
+      },
+    },
+    keys: { QWEN_CONSOLE_TOKEN: 'console-token' },
+  })
+  const calls = mockFetch(t, async () => json({
+    data: {
+      DataV2: {
+        data: {
+          data: { per1MonthPercentage: 0.5, per1MonthResetTime: 1_786_000_000_000 },
+        },
+      },
+    },
+  }))
+
+  const cn = await body(await host.request('qwen-token-plan-cn'))
+  assert.equal(cn.ok, true)
+  assert.equal(cn.kind, 'qwen')
+  assert.equal(cn.plan.usedPercent, 50)
+  assert.equal(cn.plan.remainingPercent, 50)
+  assert.equal(cn.plan.resetAt, new Date(1_786_000_000_000).toISOString())
+
+  const singapore = await body(await host.request('qwen-token-plan'))
+  assert.equal(singapore.ok, true)
+  assert.equal(singapore.plan.remainingPercent, 50)
+
+  assert.equal(calls[0].init.method, 'POST')
+  assert.equal(calls[0].init.headers.Authorization, 'Bearer console-token')
+  assert.match(calls[0].url, /^https:\/\/bailian-cs\.console\.aliyun\.com\/cli\/api\.json\?/)
+  assert.match(calls[0].url, /action=BroadScopeAspnGateway/)
+  const cnBody = new URLSearchParams(calls[0].init.body)
+  assert.equal(cnBody.get('region'), 'cn-beijing')
+  assert.match(cnBody.get('params'), /tokenplan\/personal\/api\/v2\/usage/)
+
+  assert.match(calls[1].url, /^https:\/\/bailian-singapore-cs\.alibabacloud\.com\/cli\/api\.json\?/)
+  assert.match(calls[1].url, /action=IntlBroadScopeAspnGateway/)
+  assert.equal(new URLSearchParams(calls[1].init.body).get('region'), 'ap-southeast-1')
+})
+
+test('reports a missing Qwen console token without calling upstream', async (t) => {
+  const host = createHarness({
+    providers: {
+      'qwen-token-plan-cn': {
+        defaultBaseURL: 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
+        nativeEnv: ['QWEN_TOKEN_PLAN_CN_API_KEY'],
+      },
+    },
+    keys: { QWEN_TOKEN_PLAN_CN_API_KEY: 'sk-sp-plan' },
+  })
+  const calls = mockFetch(t, async () => json({}))
+  const data = await body(await host.request('qwen-token-plan-cn'))
+  assert.equal(data.ok, false)
+  assert.equal(data.reason, 'missing-console-token')
+  assert.equal(calls.length, 0)
 })

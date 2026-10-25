@@ -9,6 +9,7 @@
 import * as account from './account.js'
 import { routeFromBaseURL } from './index.js'
 import { withCacheKey } from './shared.js'
+import * as qwen from './qwen.js'
 import * as xiaomiMimo from './xiaomi-mimo.js'
 
 const ACCOUNT_PROVIDER = 'deepseek-account'
@@ -22,7 +23,15 @@ export function resolveRoute(ctx, provider, overrides) {
   if (!provider) return undefined
   if (overrides && Object.prototype.hasOwnProperty.call(overrides, provider)) {
     const custom = overrides[provider]
-    return custom && typeof custom === 'object' ? withCacheKey({ ...custom, provider }) : undefined
+    if (!custom || typeof custom !== 'object') return undefined
+    const route = { ...custom, provider }
+    if (route.kind === xiaomiMimo.kind && route.mode === undefined) {
+      route.mode = xiaomiMimo.billingMode(provider)
+    }
+    if (route.kind === qwen.kind && route.keyNames === undefined) {
+      route.keyNames = qwen.TOKEN_NAMES
+    }
+    return withCacheKey(route)
   }
   if (provider === ACCOUNT_PROVIDER) return withCacheKey({ provider, kind: account.kind })
   if (!ctx.llm.listProviders().some((entry) => entry.id === provider)) return undefined
@@ -43,8 +52,18 @@ export function resolveRoute(ctx, provider, overrides) {
       return withCacheKey({
         provider,
         kind: xiaomiMimo.kind,
+        mode: xiaomiMimo.billingMode(provider, baseURL),
         endpoint: xiaomiMimo.DEFAULT_ENDPOINT,
         keyNames: cookieNames,
+      })
+    }
+    const qwenRoute = qwen.routeFor(baseURL)
+    if (qwenRoute) {
+      return withCacheKey({
+        provider,
+        kind: qwen.kind,
+        ...qwenRoute,
+        keyNames: qwen.TOKEN_NAMES,
       })
     }
     const keyNames = profile.apiKeyEnv

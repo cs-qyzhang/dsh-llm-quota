@@ -1,9 +1,14 @@
 /**
- * Xiaomi MiMo open platform: pay-as-you-go balance plus Token Plan credits.
+ * Xiaomi MiMo open platform.
+ *
+ * MiMo exposes two separate products with different DSH providers:
+ *   - pay-as-you-go (`api.xiaomimimo.com`) reports the wallet balance;
+ *   - Token Plan (`token-plan-*.xiaomimimo.com`) reports plan credits.
  *
  * Both figures live behind the platform console session; the inference API key
  * (`sk-*`) and Token Plan keys (`tp-*` / `ttp-*`) cannot query them. This
- * adapter therefore reads a console cookie from the credential store.
+ * adapter therefore reads a console cookie from the credential store and, when
+ * the provider type is known, only calls the matching console endpoints.
  */
 
 import {
@@ -19,12 +24,40 @@ import {
 export const kind = 'xiaomi-mimo'
 export const hosts = {}
 
+export const MODE_BALANCE = 'balance'
+export const MODE_PLAN = 'plan'
+
 export const DEFAULT_ENDPOINT = 'https://platform.xiaomimimo.com/api/v1'
 export const COOKIE_NAMES = ['MIMO_COOKIE', 'XIAOMI_MIMO_COOKIE']
 
 const PLAN_NAME = 'plan_total_token'
 const MONTH_NAME = 'month_total_token'
 const COMPENSATION_NAME = 'compensation_total_token'
+const TOKEN_PLAN_PROVIDER = /(?:^|-)token-plan(?:-|$)/
+const XIAOMI_HOST = 'xiaomimimo.com'
+
+/**
+ * Infer which console section a MiMo provider bills through.
+ *
+ * Auto-resolved routes always know the inference host, which is authoritative:
+ * `token-plan-*` hosts are the Token Plan and everything else is pay-as-you-go.
+ * Explicit `config.providers` overrides only expose the provider id, so fall
+ * back to `xiaomi` / `xiaomi-token-plan-*` and leave unknown ids unspecified
+ * (the legacy "both sections" behaviour).
+ */
+export function billingMode(provider, baseURL) {
+  if (typeof baseURL === 'string') {
+    const hostname = hostnameOf(baseURL)
+    if (hostname && (hostname === XIAOMI_HOST || hostname.endsWith(`.${XIAOMI_HOST}`))) {
+      return hostname.startsWith('token-plan') ? MODE_PLAN : MODE_BALANCE
+    }
+  }
+  if (typeof provider === 'string') {
+    if (TOKEN_PLAN_PROVIDER.test(provider)) return MODE_PLAN
+    if (provider === 'xiaomi') return MODE_BALANCE
+  }
+  return undefined
+}
 
 export async function read(ctx, route) {
   const cookie = await resolveKey(ctx, route.keyNames)
@@ -37,6 +70,55 @@ export async function read(ctx, route) {
     'x-timezone': timezone(),
   }
 
+  if (route.mode === MODE_BALANCE) return readBalance(route, base, headers)
+  if (route.mode === MODE_PLAN) return readPlan(route, base, headers)
+  return readAll(route, base, headers)
+}
+
+async function readBalance(route, base, headers) {
+  const [balance, profile] = await Promise.all([
+    request(`${base}/balance`, headers),
+    request(`${base}/userProfile`, headers),
+  ])
+
+  const ledger = balance.value ?? {}
+  const amount = money(ledger.balance) ?? money(ledger.cashBalance)
+  const cashBalance = money(ledger.cashBalance)
+  const giftBalance = money(ledger.giftBalance)
+  const frozenBalance = money(ledger.frozenBalance)
+
+  if (amount === undefined && cashBalance === undefined) {
+    const failure = balance.error
+    throw failure instanceof Error ? failure : new Error('invalid quota response')
+  }
+
+  const result = baseResult(route, MODE_BALANCE)
+  result.currency = currencyOf(profile.value, ledger)
+  if (amount !== undefined) result.amount = amount
+  if (cashBalance !== undefined) result.cashBalance = cashBalance
+  if (giftBalance !== undefined) result.giftBalance = giftBalance
+  if (frozenBalance !== undefined) result.frozenBalance = frozenBalance
+  return result
+}
+
+async function readPlan(route, base, headers) {
+  const [usage, detail] = await Promise.all([
+    request(`${base}/tokenPlan/usage`, headers),
+    request(`${base}/tokenPlan/detail`, headers),
+  ])
+
+  const plan = fromPlan(usage.value, detail.value)
+  if (!plan) {
+    const failure = usage.error ?? detail.error
+    throw failure instanceof Error ? failure : new Error('invalid quota response')
+  }
+
+  const result = baseResult(route, MODE_PLAN)
+  result.plan = plan
+  return result
+}
+
+async function readAll(route, base, headers) {
   const [balance, usage, detail, profile] = await Promise.all([
     request(`${base}/balance`, headers),
     request(`${base}/tokenPlan/usage`, headers),
@@ -56,18 +138,24 @@ export async function read(ctx, route) {
     throw failure instanceof Error ? failure : new Error('invalid quota response')
   }
 
-  const result = {
-    ok: true,
-    provider: route.provider,
-    kind,
-    currency: currencyOf(profile.value, ledger),
-    updatedAt: nowIso(),
-  }
+  const result = baseResult(route)
+  result.currency = currencyOf(profile.value, ledger)
   if (amount !== undefined) result.amount = amount
   if (cashBalance !== undefined) result.cashBalance = cashBalance
   if (giftBalance !== undefined) result.giftBalance = giftBalance
   if (frozenBalance !== undefined) result.frozenBalance = frozenBalance
   if (plan) result.plan = plan
+  return result
+}
+
+function baseResult(route, mode) {
+  const result = {
+    ok: true,
+    provider: route.provider,
+    kind,
+    updatedAt: nowIso(),
+  }
+  if (mode) result.mode = mode
   return result
 }
 
@@ -158,6 +246,14 @@ function currencyOf(profile, ledger) {
 function money(value) {
   const text = walletBalance(value)
   return text === undefined ? undefined : text
+}
+
+function hostnameOf(baseURL) {
+  try {
+    return new URL(baseURL).hostname
+  } catch {
+    return undefined
+  }
 }
 
 function baseEndpoint(endpoint) {
