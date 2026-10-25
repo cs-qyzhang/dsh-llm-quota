@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Model Quota",
+    "description": "Shows the remaining balance or coding-plan quota for the active model provider below the composer."
+  }
+}
