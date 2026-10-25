@@ -42,7 +42,7 @@ dsh Host
 | `providers/resolve.js` | 读取 DSH 实时 provider 配置，把 provider id 解析成额度路由（含 `config.providers` 覆盖） |
 | `providers/shared.js` | 适配器共享工具：凭证读取、上游 HTTP、缓存指纹、统一响应片段 |
 | `providers/*.js` | 单个额度体系适配器（`account`、`deepseek`、`glm`、`kimi`、`minimax`、`openrouter`、`xiaomi-mimo`） |
-| `client.js` | Client 插件：注册 locale 字典、向 composer dock 注册条目、轮询、渲染浮层 |
+| `client.js` | Client 插件：注册 locale 字典、向 composer dock 注册条目、模型选择标签/分组标题的额度装饰、轮询、渲染浮层 |
 | `locale/*.json` | 插件管理页使用的标题/描述元数据 |
 | `icon.svg` | 插件图标 |
 
@@ -236,6 +236,29 @@ const provider = selection?.next?.provider ?? selection?.lastUsed?.provider ?? '
 - 点击外部、按 Escape、窗口 resize 时关闭。
 - 样式只使用 `--dsw-alias-*`、`--dsw-specific-*` 和 `--dsh-*` 主题变量，不写死颜色。
 - 条目本身是 `button`，带 `aria-haspopup="dialog"` 与 `aria-expanded`。
+
+### 模型选择处的额度
+
+模型选择菜单的分组标题和输入区的当前模型标签由 ui-model-selection 渲染，它们不属于 composer dock，也没有可用的 list slot。`conversation.input.model.label` 虽然是官方的模型名替换入口，但它是 `single` slot，已被内置 `ui-deepseek-model-label-1017`（模型行里的 `1017` 徽标）以优先级 0 占用；同优先级注册会抛错，用 `priority: -1` 抢占会覆盖掉该徽标。
+
+本插件因此采用纯 CSS 装饰，复用 ui-model-selection 已公开的 DOM 钩子：
+
+| 位置 | 选择器 |
+| --- | --- |
+| 当前模型（composer 触发器） | `button[aria-haspopup="menu"] > span > span[data-provider-id=...]::before` |
+| provider 分组标题（菜单内） | `section[data-menu-group]:has(span[data-provider-id=...]) > [data-menu-group-heading]::after` |
+
+- 胶囊样式只使用 `--dsw-alias-*` 变量，与内置 Tag neutral 外观一致。
+- 依据 provider 生成一条 `content` 规则，写入 `#llm-quota-model-badges` 样式表；数据变化时整表重写。
+- 仅 `ok: true` 的结果生成规则；异常态（未配置凭证、未登录、接口失败）不显示任何内容。
+- `/model` 斜杠命令弹窗的选项只有 label 字符串，DOM 中没有 provider 标识，因此不在覆盖范围内。
+
+#### 数据源与刷新
+
+- `MutationObserver` 只观察新增节点，并且仅当节点自身匹配或包含 `span[data-provider-id]`、`[data-menu-group]` 时才触发扫描，避免聊天流式输出造成无谓扫描；扫描延迟 250ms 合并。
+- 每个 provider 一条记录：成功结果复用 60 秒；临时失败 30 秒后重试；失败与请求中都不会重复发起（Host 再做 30 秒缓存与单飞）。
+- 扫描会顺带读取触发器的 provider，因此新会话欢迎页（没有 dock）也能显示当前模型额度。
+- locale 切换时重算文案；DSH 升级后若 DOM 钩子改名，装饰会静默失效，不影响模型选择。
 
 ### 本地化
 

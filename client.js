@@ -8,6 +8,8 @@ window.__ModuleLoader__.load({
     const NS = 'llm-quota'
     const REFRESH_MS = 60_000
     const FETCH_TIMEOUT_MS = 8_000
+    const RETRY_MS = 30_000
+    const SCAN_DELAY_MS = 250
     const PANEL_WIDTH = 296
 
     const DICT = {
@@ -47,6 +49,9 @@ window.__ModuleLoader__.load({
         openrouterRemaining: '剩余额度',
         openrouterCredits: '已购买额度',
         openrouterUsage: '已使用',
+        badgeFiveHour: '5h {percent}%',
+        badgeWeekly: '周 {percent}%',
+        badgePlan: '套餐 {percent}%',
       },
       en: {
         title: 'Model quota',
@@ -84,6 +89,9 @@ window.__ModuleLoader__.load({
         openrouterRemaining: 'Credits remaining',
         openrouterCredits: 'Credits purchased',
         openrouterUsage: 'Usage',
+        badgeFiveHour: '5h {percent}%',
+        badgeWeekly: 'Wk {percent}%',
+        badgePlan: 'Plan {percent}%',
       },
     }
 
@@ -138,6 +146,20 @@ window.__ModuleLoader__.load({
       const value = typeof amount === 'number' ? amount : Number.parseFloat(amount)
       if (!Number.isFinite(value)) return `${symbol}${amount ?? ''}`.trim()
       return `${symbol}${value.toFixed(2)}`
+    }
+
+    async function requestQuota(provider, signal) {
+      const query = provider ? `?provider=${encodeURIComponent(provider)}` : ''
+      const response = await fetch(`/api/llm-quota${query}`, {
+        signal,
+        headers: { Accept: 'application/json' },
+      })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const data = await response.json()
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        throw new Error('invalid quota response')
+      }
+      return data
     }
 
     function formatNumber(value) {
@@ -208,6 +230,29 @@ window.__ModuleLoader__.load({
       return parts.length > 0 ? parts.join(' · ') : tr('error')
     }
 
+    function badgeText(data, tr) {
+      if (!data || data.ok !== true) return ''
+      if (data.kind === 'balance' || data.kind === 'openrouter') {
+        return formatAmount(data.currency, data.amount)
+      }
+      if (data.kind === 'xiaomi-mimo') {
+        const parts = []
+        if (data.amount !== undefined) parts.push(formatAmount(data.currency, data.amount))
+        if (data.plan && Number.isFinite(data.plan.remainingPercent)) {
+          parts.push(tr('badgePlan', { percent: data.plan.remainingPercent }))
+        }
+        return parts.join(' · ')
+      }
+      const parts = []
+      if (data.fiveHour && Number.isFinite(data.fiveHour.remainingPercent)) {
+        parts.push(tr('badgeFiveHour', { percent: data.fiveHour.remainingPercent }))
+      }
+      if (data.weekly && Number.isFinite(data.weekly.remainingPercent)) {
+        parts.push(tr('badgeWeekly', { percent: data.weekly.remainingPercent }))
+      }
+      return parts.join(' · ')
+    }
+
     function panelTitle(data, tr) {
       if (!data || data.ok === false) return tr('title')
       if (data.kind === 'glm') return data.level ? `GLM ${capitalise(data.level)}` : 'GLM'
@@ -246,6 +291,163 @@ window.__ModuleLoader__.load({
         note ? h('span', { style: { display: 'block', color: TOKENS.textDim, fontSize: 11, lineHeight: '16px' } }, note) : null))
     }
 
+    // Model-selection labels are decorated through the DOM hooks ui-model-selection
+    // publishes (data-provider-id on label wrappers, data-menu-group(-heading) in
+    // menus) so the shipped 1017 badge keeps its single-slot registration.
+    const BADGE_BASE_CSS = `
+button[aria-haspopup="menu"] > span > span[data-provider-id]::before,
+section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]::after {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-module-platform);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+button[aria-haspopup="menu"] > span > span[data-provider-id]::before {
+  margin-right: 4px;
+}
+section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]::after {
+  position: absolute;
+  right: 7px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+`
+
+    function installModelBadges(locale, tr) {
+      if (typeof document === 'undefined' || !document.head || typeof MutationObserver === 'undefined') {
+        return () => {}
+      }
+
+      const style = document.createElement('style')
+      style.id = 'llm-quota-model-badges'
+      style.dataset.plugin = '@local/dsh-llm-quota'
+      document.head.appendChild(style)
+
+      const feed = new Map()
+      let disposed = false
+      let scanTimer = null
+      let refreshTimer = null
+      let stopLocale = null
+
+      const render = () => {
+        const rules = []
+        for (const [provider, entry] of feed) {
+          const text = badgeText(entry.data, tr)
+          if (!text) continue
+          const id = JSON.stringify(provider)
+          const value = JSON.stringify(text)
+          rules.push(`section[data-menu-group]:has(span[data-provider-id=${id}]) > [data-menu-group-heading]::after{content:${value}}`)
+          rules.push(`button[aria-haspopup="menu"] > span > span[data-provider-id=${id}]::before{content:${value}}`)
+        }
+        style.textContent = BADGE_BASE_CSS + rules.join('\n')
+      }
+
+      const load = (provider) => {
+        let entry = feed.get(provider)
+        if (!entry) {
+          entry = { data: null, at: 0, failedAt: 0, pending: null }
+          feed.set(provider, entry)
+        }
+        if (entry.pending) return
+        const now = Date.now()
+        if (entry.data && now - entry.at < REFRESH_MS) return
+        if (entry.failedAt !== 0 && now - entry.failedAt < RETRY_MS) return
+        const controller = new AbortController()
+        const abortTimer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+        const current = { controller, abortTimer }
+        entry.pending = current
+        requestQuota(provider, controller.signal)
+          .then((data) => {
+            if (data.ok === false && data.reason === 'error') {
+              entry.failedAt = Date.now()
+              return
+            }
+            entry.data = data
+            entry.at = Date.now()
+            entry.failedAt = 0
+          })
+          .catch(() => {
+            entry.failedAt = Date.now()
+          })
+          .finally(() => {
+            clearTimeout(abortTimer)
+            if (entry.pending === current) entry.pending = null
+            if (!disposed) render()
+          })
+      }
+
+      const scan = () => {
+        const seen = new Set()
+        for (const node of document.querySelectorAll('span[data-provider-id]')) {
+          const provider = node.getAttribute('data-provider-id')
+          if (!provider || seen.has(provider)) continue
+          seen.add(provider)
+          load(provider)
+        }
+      }
+
+      const schedule = () => {
+        if (scanTimer !== null) return
+        scanTimer = setTimeout(() => {
+          scanTimer = null
+          scan()
+          render()
+        }, SCAN_DELAY_MS)
+      }
+
+      const relevant = (node) => node.nodeType === 1 && (
+        node.matches('[data-menu-group], span[data-provider-id]')
+        || node.querySelector('[data-menu-group], span[data-provider-id]') !== null
+      )
+
+      const observer = new MutationObserver((records) => {
+        for (const record of records) {
+          for (const node of record.addedNodes) {
+            if (relevant(node)) {
+              schedule()
+              return
+            }
+          }
+        }
+      })
+      observer.observe(document.body ?? document.documentElement, { childList: true, subtree: true })
+
+      try {
+        if (typeof locale?.subscribe === 'function') stopLocale = locale.subscribe(render)
+      } catch {}
+
+      scan()
+      render()
+      refreshTimer = setInterval(() => {
+        scan()
+        render()
+      }, REFRESH_MS)
+
+      return () => {
+        disposed = true
+        observer.disconnect()
+        if (refreshTimer !== null) clearInterval(refreshTimer)
+        if (scanTimer !== null) clearTimeout(scanTimer)
+        try {
+          stopLocale?.()
+        } catch {}
+        for (const entry of feed.values()) {
+          if (!entry.pending) continue
+          clearTimeout(entry.pending.abortTimer)
+          entry.pending.controller.abort()
+          entry.pending = null
+        }
+        style.remove()
+      }
+    }
+
     function QuotaPill({ useProjection, t }) {
       const tr = typeof t === 'function' ? t : fallbackTranslate
       const selection = useProjection('modelSelection')
@@ -270,16 +472,7 @@ window.__ModuleLoader__.load({
           const current = { controller, abortTimer }
           active = current
           try {
-            const query = provider ? `?provider=${encodeURIComponent(provider)}` : ''
-            const response = await fetch(`/api/llm-quota${query}`, {
-              signal: controller.signal,
-              headers: { Accept: 'application/json' },
-            })
-            if (!response.ok) throw new Error(`HTTP ${response.status}`)
-            const data = await response.json()
-            if (!data || typeof data !== 'object' || Array.isArray(data)) {
-              throw new Error('invalid quota response')
-            }
+            const data = await requestQuota(provider, controller.signal)
             if (disposed) return
             if (data.ok === false && data.reason === 'error') {
               setState((previous) => previous.data?.ok === true
@@ -532,6 +725,13 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'locale'],
       apply(ctx) {
         ctx.effect(() => ctx.locale.register(NS, DICT), 'llm-quota: dictionary')
+        ctx.effect(() => {
+          let tr = fallbackTranslate
+          try {
+            if (typeof ctx.locale?.bind === 'function') tr = ctx.locale.bind(NS)
+          } catch {}
+          return installModelBadges(ctx.locale, tr)
+        }, 'llm-quota: model badges')
         ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
           name: 'conversation.composer.dock',
           id: 'llm-quota',
