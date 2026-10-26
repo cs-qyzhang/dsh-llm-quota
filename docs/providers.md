@@ -1,6 +1,21 @@
 # 供应商适配
 
-本插件按「当前会话所选模型的 provider id」选择额度适配器。provider id 是 DSH 模型路由的名字，例如 profile 中 `llm-pi-ai.providers` 的键。插件不再根据名称猜测供应商，而是读取 DSH 当前激活路由的实时配置。
+插件按「当前会话所选模型的 provider id」选择额度适配器。provider id 是 DSH 模型路由的名字，例如 profile 中 `llm-pi-ai.providers` 的键。插件不根据名称猜测供应商，而是读取 DSH 当前激活路由的实时配置。
+
+## 支持的额度体系
+
+| 供应商 | provider id 示例 | `kind` | 凭证引用 | 额度来源 |
+| --- | --- | --- | --- | --- |
+| DeepSeek 账号 | `deepseek-account` | `account` | DSH 账号登录 | `ctx.deepseekAccount.getBalance()` |
+| DeepSeek API Key | `deepseek-official` | `deepseek` | 实时 `apiKeyEnv`（默认 `DEEPSEEK_API_KEY`） | `api.deepseek.com/user/balance` |
+| GLM Coding Plan | `zai`、`zai-coding-cn` | `glm` | 实时 `apiKeyEnv` / `nativeAuth.env` | `api.z.ai` / `open.bigmodel.cn` 的配额接口 |
+| Kimi For Coding | `kimi-coding` | `kimi` | `KIMI_API_KEY` 或 profile 的 `apiKeyEnv` | `api.kimi.com/coding/v1/usages` |
+| MiniMax Coding Plan | `minimax`、`minimax-cn` | `minimax` | `MINIMAX_API_KEY` / `MINIMAX_CN_API_KEY` | `/v1/token_plan/remains`（旧端点 `/v1/coding_plan/remains`） |
+| Moonshot 开放平台 | `moonshotai`、`moonshotai-cn` | `moonshot` | `MOONSHOT_API_KEY` | `/v1/users/me/balance` |
+| OpenRouter | `openrouter` | `openrouter` | `OPENROUTER_API_KEY` | `/api/v1/credits` |
+| Vercel AI Gateway | 指向 `ai-gateway.vercel.sh` 的路由 | `vercel-gateway` | `AI_GATEWAY_API_KEY` | `/v1/credits` |
+| Qwen Token Plan | `qwen-token-plan*` | `qwen` | `QWEN_CONSOLE_TOKEN` / `BAILIAN_CONSOLE_TOKEN` | 阿里云百炼控制台网关 |
+| Xiaomi MiMo | `xiaomi`、`xiaomi-token-plan-*` | `xiaomi-mimo` | `MIMO_COOKIE` / `XIAOMI_MIMO_COOKIE` | `platform.xiaomimimo.com/api/v1` |
 
 ## 自动解析
 
@@ -28,9 +43,7 @@
 
 因此，DSH 默认的 `zai-coding-cn` 会走 `open.bigmodel.cn`，而 `zai` 会走 `api.z.ai`。如果用户显式修改 `baseURL`，插件跟随修改后的已知主机，不复用旧端点缓存。
 
-小米 MiMo 的主机（`api.xiaomimimo.com` 与 `token-plan-*.xiaomimimo.com`）不映射到推理 Key 的额度接口，而是统一走控制台 Cookie 适配器 `xiaomi-mimo`；详见后文。
-
-阿里云百炼 Token Plan 的主机（`token-plan.*.maas.aliyuncs.com`）同样不能用推理 Key 查额度，插件改走控制台网关适配器 `qwen`；详见后文。
+小米 MiMo 的主机（`api.xiaomimimo.com` 与 `token-plan-*.xiaomimimo.com`）不映射到推理 Key 的额度接口，而是统一走控制台 Cookie 适配器 `xiaomi-mimo`；阿里云百炼 Token Plan 的主机（`token-plan.*.maas.aliyuncs.com`）同样不能用推理 Key 查额度，改走控制台网关适配器 `qwen`。两者的细节见后文。
 
 OAuth-only、未知代理、自托管地址和未激活 provider 均返回 `unsupported`，不会向上游发送凭证。自定义代理必须通过 `config.providers` 显式声明额度端点和凭证引用。
 
@@ -79,70 +92,6 @@ Authorization: Bearer <实时 apiKeyEnv 对应的 Key>
 ```
 
 插件读取 `balance_infos[0]` 的 `total_balance`，并保留 `is_available` 供展开面板显示状态。
-
-## OpenRouter（按量余额）
-
-DSH 的 `openrouter` 路由默认使用 `OPENROUTER_API_KEY` 与 `https://openrouter.ai/api/v1`：
-
-```http
-GET https://openrouter.ai/api/v1/credits
-Authorization: Bearer <实时凭证引用对应的 Key>
-```
-
-返回（字段有裁剪）：
-
-```json
-{
-  "data": {
-    "total_credits": 20,
-    "total_usage": 4.5
-  }
-}
-```
-
-字段含义：
-
-| 字段 | 含义 |
-| --- | --- |
-| `data.total_credits` | 账户累计购买额度 |
-| `data.total_usage` | 账户累计消耗 |
-
-注意：
-
-- 剩余额度 = `total_credits - total_usage`，最小为 0；币种固定为 USD。
-- `total_credits` 缺失时按临时失败处理；`total_usage` 缺失按 0 处理。
-- 该接口返回账户级额度，不是单个 Key 的消费上限；单 Key 的 `limit` / `limit_remaining` 在 `/api/v1/key`，当前版本不展示。
-
-## Vercel AI Gateway（按量余额）
-
-DSH 中把 Vercel AI Gateway 作为 provider 时，推理主机为 `ai-gateway.vercel.sh`，凭证引用通常是 `AI_GATEWAY_API_KEY`：
-
-```http
-GET https://ai-gateway.vercel.sh/v1/credits
-Authorization: Bearer <实时凭证引用对应的 AI Gateway API Key>
-```
-
-返回（字段有裁剪）：
-
-```json
-{
-  "balance": "95.50",
-  "total_used": "4.50"
-}
-```
-
-字段含义：
-
-| 字段 | 含义 |
-| --- | --- |
-| `balance` | API Key 所属团队的剩余 AI Gateway Credits，单位 USD |
-| `total_used` | 团队累计消耗，单位 USD |
-
-注意：
-
-- 额度属于 API Key 所属团队，不需要额外传 team id。
-- `balance` 缺失时按临时失败处理；`total_used` 缺失时不显示「已使用」。
-- Vercel 部署也可以使用 OIDC token，但本插件只读取 DSH 凭据库中的 API Key，不读取 `VERCEL_OIDC_TOKEN`。
 
 ## GLM Coding Plan
 
@@ -225,36 +174,6 @@ Authorization: Bearer <实时凭证引用对应的 Key>
 - `booster_wallet` 是加油包信息，当前版本不展示。
 - 这是 Kimi For Coding 的接口，不是 Moonshot 开放平台的 `/v1/users/me/balance`。后者只适合按量计费的 Moonshot API Key。
 
-## Moonshot 开放平台（按量余额）
-
-Moonshot 按量计费与 Kimi For Coding 是两套独立产品：`moonshotai` / `moonshotai-cn` 是开放平台余额，`kimi-coding` 是 Coding Plan。插件按推理主机区分，不会把余额数据挂到 Coding Plan 路由上。
-
-```http
-GET https://api.moonshot.cn/v1/users/me/balance
-GET https://api.moonshot.ai/v1/users/me/balance
-Authorization: Bearer <实时 MOONSHOT_API_KEY>
-```
-
-返回（字段有裁剪）：
-
-```json
-{
-  "code": 0,
-  "data": {
-    "available_balance": 49.58894,
-    "voucher_balance": 46.58893,
-    "cash_balance": 3.00001
-  },
-  "scode": "0x0",
-  "status": true
-}
-```
-
-- `available_balance` 是可用总额（现金 + 代金券），作为状态行主金额。
-- `cash_balance` 显示为「充值余额」，`voucher_balance` 显示为「赠送余额」。
-- `.cn` 主机按 CNY 显示，`.ai` 主机按 USD 显示。
-- `code` 非 0 或 `status: false` 按业务错误处理；`missing-credential` 是终态，客户端显示「未配置 API Key」。
-
 ## MiniMax Coding Plan / M Plan
 
 DSH 的 `minimax` 与 `minimax-cn` 使用订阅 Key（`MINIMAX_API_KEY` / `MINIMAX_CN_API_KEY`），额度按「prompt 次数」计算，分为动态 5 小时窗口与周窗口：
@@ -301,10 +220,104 @@ Authorization: Bearer <实时凭证引用对应的 Key>
 
 注意：
 
-- 已用比例 = `100 - remaining`；没有百分比字段时回退到 `total - remaining` 计算，不能把 `current_interval_usage_count` 当作已用次数。
+- 已用比例 = `100 - remaining`；没有百分比字段时回退到 `(total - remaining) / total` 计算，不能把 `current_interval_usage_count` 当作已用次数。
 - `model_remains` 的第一条有效条目是账号的规范额度状态，后续条目是视频等细分模型桶；插件只读取第一条能解析出窗口的条目。
 - 新 M Plan 使用 `/v1/token_plan/remains`，旧 Coding Plan 使用 `/v1/coding_plan/remains`；两个端点响应结构相同。同一个 Key 不一定被两者都接受，插件在业务错误时自动尝试同一主机下的另一个端点。自定义 `config.providers` 的 `endpoint` 不在上述两个路径时不做回退。
 - `base_resp.status_code` 非 0 按业务错误处理；`missing-credential` 是终态，客户端显示「未配置 API Key」。
+
+## Moonshot 开放平台（按量余额）
+
+Moonshot 按量计费与 Kimi For Coding 是两套独立产品：`moonshotai` / `moonshotai-cn` 是开放平台余额，`kimi-coding` 是 Coding Plan。插件按推理主机区分，不会把余额数据挂到 Coding Plan 路由上。
+
+```http
+GET https://api.moonshot.cn/v1/users/me/balance
+GET https://api.moonshot.ai/v1/users/me/balance
+Authorization: Bearer <实时 MOONSHOT_API_KEY>
+```
+
+返回（字段有裁剪）：
+
+```json
+{
+  "code": 0,
+  "data": {
+    "available_balance": 49.58894,
+    "voucher_balance": 46.58893,
+    "cash_balance": 3.00001
+  },
+  "scode": "0x0",
+  "status": true
+}
+```
+
+- `available_balance` 是可用总额（现金 + 代金券），作为状态行主金额。
+- `cash_balance` 显示为「充值余额」，`voucher_balance` 显示为「赠送余额」。
+- `.cn` 主机按 CNY 显示，`.ai` 主机按 USD 显示。
+- `code` 非 0 或 `status: false` 按业务错误处理；`missing-credential` 是终态，客户端显示「未配置 API Key」。
+
+## OpenRouter（按量余额）
+
+DSH 的 `openrouter` 路由默认使用 `OPENROUTER_API_KEY` 与 `https://openrouter.ai/api/v1`：
+
+```http
+GET https://openrouter.ai/api/v1/credits
+Authorization: Bearer <实时凭证引用对应的 Key>
+```
+
+返回（字段有裁剪）：
+
+```json
+{
+  "data": {
+    "total_credits": 20,
+    "total_usage": 4.5
+  }
+}
+```
+
+字段含义：
+
+| 字段 | 含义 |
+| --- | --- |
+| `data.total_credits` | 账户累计购买额度 |
+| `data.total_usage` | 账户累计消耗 |
+
+注意：
+
+- 剩余额度 = `total_credits - total_usage`，最小为 0；币种固定为 USD。
+- `total_credits` 缺失时按临时失败处理；`total_usage` 缺失按 0 处理。
+- 该接口返回账户级额度，不是单个 Key 的消费上限；单 Key 的 `limit` / `limit_remaining` 在 `/api/v1/key`，当前版本不展示。
+
+## Vercel AI Gateway（按量余额）
+
+DSH 中把 Vercel AI Gateway 作为 provider 时，推理主机为 `ai-gateway.vercel.sh`，凭证引用通常是 `AI_GATEWAY_API_KEY`：
+
+```http
+GET https://ai-gateway.vercel.sh/v1/credits
+Authorization: Bearer <实时凭证引用对应的 AI Gateway API Key>
+```
+
+返回（字段有裁剪）：
+
+```json
+{
+  "balance": "95.50",
+  "total_used": "4.50"
+}
+```
+
+字段含义：
+
+| 字段 | 含义 |
+| --- | --- |
+| `balance` | API Key 所属团队的剩余 AI Gateway Credits，单位 USD |
+| `total_used` | 团队累计消耗，单位 USD |
+
+注意：
+
+- 额度属于 API Key 所属团队，不需要额外传 team id。
+- `balance` 缺失时按临时失败处理；`total_used` 缺失时不显示「已使用」。
+- Vercel 部署也可以使用 OIDC token，但本插件只读取 DSH 凭据库中的 API Key，不读取 `VERCEL_OIDC_TOKEN`。
 
 ## 阿里云百炼 Qwen Token Plan
 
@@ -411,7 +424,7 @@ refs:
 
 ```yaml
 - id: llm-quota
-  name: '@local/dsh-llm-quota'
+  name: '@cs-qyzhang/dsh-llm-quota'
   config:
     providers:
       xiaomi:
@@ -495,13 +508,13 @@ x-timezone: Asia/Shanghai
 
 ## 自定义或增加 provider
 
-### 自定义代理或显式覆盖
+### 显式覆盖
 
 未知代理不会从推理 `baseURL` 自动猜测额度地址。在插件行的 `config.providers` 中显式声明完整适配器，不需要改代码：
 
 ```yaml
 - id: llm-quota
-  name: '@local/dsh-llm-quota'
+  name: '@cs-qyzhang/dsh-llm-quota'
   config:
     providers:
       my-glm:
@@ -514,7 +527,12 @@ x-timezone: Asia/Shanghai
         keyNames: [MY_KIMI_KEY]
 ```
 
-`kind` 必须是已有适配器：`account`、`deepseek`、`glm`、`kimi`、`minimax`、`moonshot`、`openrouter`、`qwen`、`vercel-gateway`、`xiaomi-mimo`。某个 provider 的显式配置会整体替代自动解析结果，因此自定义 GLM/Kimi/MiniMax/Moonshot/OpenRouter/Vercel AI Gateway 应同时提供 `endpoint` 和 `keyNames`；`xiaomi-mimo` 的 `endpoint` 是控制台 API 基地址（默认 `https://platform.xiaomimimo.com/api/v1`），`keyNames` 填控制台 Cookie 的凭据引用，`mode` 可选 `balance` 或 `plan`；`qwen` 的 `endpoint` 是控制台 `cli/api.json` 完整地址，`keyNames` 默认取 `QWEN_CONSOLE_TOKEN` / `BAILIAN_CONSOLE_TOKEN`。显式覆盖不要求 DSH 中存在同名激活路由。
+`kind` 必须是已有适配器：`account`、`deepseek`、`glm`、`kimi`、`minimax`、`moonshot`、`openrouter`、`qwen`、`vercel-gateway`、`xiaomi-mimo`。
+
+- 某个 provider 的显式配置会整体替代自动解析结果，因此自定义 GLM / Kimi / MiniMax / Moonshot / OpenRouter / Vercel AI Gateway 应同时提供 `endpoint` 和 `keyNames`。
+- `xiaomi-mimo` 的 `endpoint` 是控制台 API 基地址（默认 `https://platform.xiaomimimo.com/api/v1`），`keyNames` 填控制台 Cookie 的凭据引用，`mode` 可选 `balance` 或 `plan`。
+- `qwen` 的 `endpoint` 是控制台 `cli/api.json` 完整地址，`keyNames` 默认取 `QWEN_CONSOLE_TOKEN` / `BAILIAN_CONSOLE_TOKEN`。
+- 显式覆盖不要求 DSH 中存在同名激活路由。
 
 ### 接入新的额度体系
 
@@ -547,12 +565,14 @@ x-timezone: Asia/Shanghai
 
 余额型则返回 `kind: "balance"`、`currency`、`amount`、`wallets`、`bonusWallets`。
 
-5. 如果新类型需要不同的状态行文案，在 `client.js` 的 `compactLabel` / `panelTitle` 中增加分支和 `zh`/`en` 字典键。
+5. 如果新类型需要不同的状态行文案，在 `client.js` 的 `compactLabel` / `panelTitle` 中增加分支和 `zh` / `en` 字典键。
+6. 更新根目录 README 的支持范围表与本文档。
 
 ## 接口稳定性
 
 - DeepSeek 账号余额走 dsh 内部服务，稳定性由 dsh 版本决定。
 - DeepSeek API Key 余额是官方公开接口。
 - Z.AI / 智谱 与 Kimi 的额度接口不是公开文档 API，属于其前端或 CLI 正在使用的接口；字段或路径变化时，只需调整对应适配器。
-- GLM/Kimi 只返回一个有效额度窗口是合法情况；完全无法识别的响应按临时失败处理，不会覆盖旧成功数据。
-- Loader 实时配置读取与 manifest 兼容声明当前针对 DSH `0.2.1-rc.2`，升级后需重新核对配置结构。
+- GLM / Kimi 只返回一个有效额度窗口是合法情况；完全无法识别的响应按临时失败处理，不会覆盖旧成功数据。
+- Qwen 控制台接口与 Xiaomi MiMo 控制台接口都不是公开 API，字段可能变化，且需要控制台凭证。
+- Loader 实时配置读取与 manifest 兼容声明当前针对 DSH `0.2.1-rc.2` 与 `0.2.1-rc.3`，升级后需重新核对配置结构。

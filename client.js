@@ -1,12 +1,12 @@
 window.__ModuleLoader__.load({
-  id: '@local/dsh-llm-quota',
+  id: '@cs-qyzhang/dsh-llm-quota',
   factory(require) {
     const React = require('react')
     const ReactDOM = require('react-dom')
     const h = React.createElement
 
     const NS = 'llm-quota'
-    const PACKAGE = '@local/dsh-llm-quota'
+    const PACKAGE = '@cs-qyzhang/dsh-llm-quota'
     const REFRESH_MS = 60_000
     const FETCH_TIMEOUT_MS = 8_000
     const RETRY_MS = 30_000
@@ -450,7 +450,7 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
 
       const style = document.createElement('style')
       style.id = 'llm-quota-model-badges'
-      style.dataset.plugin = '@local/dsh-llm-quota'
+      style.dataset.plugin = '@cs-qyzhang/dsh-llm-quota'
       document.head.appendChild(style)
 
       const feed = new Map()

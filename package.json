@@ -1,16 +1,36 @@
 {
-  "name": "@local/dsh-llm-quota",
+  "name": "@cs-qyzhang/dsh-llm-quota",
   "version": "1.0.0",
-  "private": true,
   "type": "module",
+  "description": "Shows the active model provider's remaining balance or coding-plan quota below the composer.",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "llm",
+    "quota",
+    "balance",
+    "coding-plan"
+  ],
+  "homepage": "https://github.com/cs-qyzhang/dsh-llm-quota#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cs-qyzhang/dsh-llm-quota.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cs-qyzhang/dsh-llm-quota/issues"
+  },
   "scripts": {
-    "check": "node --check index.js && node --check client.js && for file in providers/*.js; do node --check \"$file\" || exit 1; done",
+    "check": "node --check index.js && node --check client.js && node -e \"const{readdirSync}=require('node:fs');const{execFileSync}=require('node:child_process');for(const f of readdirSync('providers'))execFileSync(process.execPath,['--check','providers/'+f],{stdio:'inherit'})\"",
     "test": "node --test test/host.test.js"
   },
   "engines": {
-    "dsh": "0.2.1-rc.2"
+    "dsh": ">=0.2.1-rc.2 <0.2.2"
   },
-  "description": "Shows the active model provider's remaining balance or coding-plan quota below the composer.",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
