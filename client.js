@@ -6,11 +6,17 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'llm-quota'
+    const PACKAGE = '@local/dsh-llm-quota'
     const REFRESH_MS = 60_000
     const FETCH_TIMEOUT_MS = 8_000
     const RETRY_MS = 30_000
     const SCAN_DELAY_MS = 250
     const PANEL_WIDTH = 296
+
+    // Credential references the provider adapters resolve, primary name first.
+    // The aliases keep parity with providers/qwen.js and providers/xiaomi-mimo.js.
+    const MIMO_REFS = ['MIMO_COOKIE', 'XIAOMI_MIMO_COOKIE']
+    const QWEN_REFS = ['QWEN_CONSOLE_TOKEN', 'BAILIAN_CONSOLE_TOKEN']
 
     const DICT = {
       zh: {
@@ -60,6 +66,32 @@ window.__ModuleLoader__.load({
         badgeFiveHour: '5h {percent}%',
         badgeWeekly: '周 {percent}%',
         badgePlan: '套餐 {percent}%',
+        credentialsTitle: '供应商额外凭证',
+        credentialsHint: '部分供应商除推理 Key 外还需要一份控制台凭证才能读取额度。值只写入 Host 凭据库，不会回传浏览器。',
+        credentialsEffective: '保存后在下一次额度刷新时生效（最长约 60 秒）。',
+        mimoCookie: 'Xiaomi MiMo 控制台 Cookie',
+        mimoCookieHint: '用于 xiaomi 与 xiaomi-token-plan 供应商。登录 platform.xiaomimimo.com 后，从任意 /api/v1/ 请求复制完整 Cookie，至少包含 serviceToken 与 userId。',
+        mimoCookiePlaceholder: 'serviceToken=...; userId=...',
+        qwenToken: 'Qwen 控制台 Access Token',
+        qwenTokenHint: '用于 qwen-token-plan 供应商。执行 bl auth login --console 后，从 ~/.bailian/config.json 复制 access_token。',
+        qwenTokenPlaceholder: '粘贴控制台 access_token',
+        credentialConfigured: '已配置',
+        credentialNotConfigured: '未配置',
+        credentialVia: '已配置（{ref}）',
+        credentialSource: '来源：{source}',
+        credentialReadOnly: '该凭证由当前配置层提供，无法在此修改。',
+        credentialLoading: '读取中…',
+        credentialSave: '保存',
+        credentialSaving: '保存中…',
+        credentialClear: '清除',
+        credentialClearing: '清除中…',
+        credentialShow: '显示',
+        credentialHide: '隐藏',
+        credentialSaved: '已保存，将在下一次额度刷新时生效。',
+        credentialEmpty: '请输入凭证内容。',
+        credentialSaveFailed: '保存失败：{message}',
+        credentialClearFailed: '清除失败：{message}',
+        credentialLoadFailed: '无法读取凭证状态：{message}',
       },
       en: {
         title: 'Model quota',
@@ -108,6 +140,32 @@ window.__ModuleLoader__.load({
         badgeFiveHour: '5h {percent}%',
         badgeWeekly: 'Wk {percent}%',
         badgePlan: 'Plan {percent}%',
+        credentialsTitle: 'Provider credentials',
+        credentialsHint: 'Some providers need an extra console credential, beyond the inference key, to read quota. Values are stored in the Host credential store and never returned to the browser.',
+        credentialsEffective: 'Changes take effect on the next quota refresh (up to 60 seconds).',
+        mimoCookie: 'Xiaomi MiMo console cookie',
+        mimoCookieHint: 'Used by the xiaomi and xiaomi-token-plan providers. Sign in to platform.xiaomimimo.com, copy the full Cookie header from any /api/v1/ request, and keep at least serviceToken and userId.',
+        mimoCookiePlaceholder: 'serviceToken=...; userId=...',
+        qwenToken: 'Qwen console access token',
+        qwenTokenHint: 'Used by qwen-token-plan providers. Run bl auth login --console and copy access_token from ~/.bailian/config.json.',
+        qwenTokenPlaceholder: 'Paste the console access_token',
+        credentialConfigured: 'Configured',
+        credentialNotConfigured: 'Not configured',
+        credentialVia: 'Configured ({ref})',
+        credentialSource: 'Source: {source}',
+        credentialReadOnly: 'This credential comes from the current configuration layer and cannot be changed here.',
+        credentialLoading: 'Reading…',
+        credentialSave: 'Save',
+        credentialSaving: 'Saving…',
+        credentialClear: 'Clear',
+        credentialClearing: 'Clearing…',
+        credentialShow: 'Show',
+        credentialHide: 'Hide',
+        credentialSaved: 'Saved. It takes effect on the next quota refresh.',
+        credentialEmpty: 'Enter a credential value.',
+        credentialSaveFailed: 'Could not save: {message}',
+        credentialClearFailed: 'Could not clear: {message}',
+        credentialLoadFailed: 'Could not read credential status: {message}',
       },
     }
 
@@ -123,6 +181,13 @@ window.__ModuleLoader__.load({
       radius: 'var(--dsw-radius-lg)',
       radiusSm: 'var(--dsw-radius-sm)',
       backdrop: 'var(--dsw-menu-backdrop-filter, none)',
+      input: 'var(--dsw-alias-settings-card-fill)',
+      inputBorder: 'var(--dsw-alias-border-l2)',
+      primary: 'var(--dsw-alias-button-primary-fill)',
+      primaryText: 'var(--dsw-alias-label-primary-foreground)',
+      link: 'var(--dsw-alias-link)',
+      danger: 'var(--dsw-alias-state-error-primary)',
+      skeleton: 'var(--dsw-alias-bg-skeleton)',
     }
 
     function GaugeIcon() {
@@ -155,6 +220,26 @@ window.__ModuleLoader__.load({
       return template.replace(/\{(\w+)\}/g, (_, name) => (
         params && params[name] !== undefined ? String(params[name]) : `{${name}}`
       ))
+    }
+
+    /** Read a Remote failure or thrown error as one short line. */
+    function remoteErrorText(error) {
+      if (error instanceof Error) return error.message.slice(0, 300)
+      if (error && typeof error === 'object') {
+        if (typeof error.message === 'string') return error.message.slice(0, 300)
+        if (typeof error.code === 'string') return error.code
+        try {
+          return JSON.stringify(error).slice(0, 300)
+        } catch {}
+      }
+      return String(error ?? 'unknown error').slice(0, 300)
+    }
+
+    /** Resolve a credential Remote call as a result, or throw its error. */
+    async function credentialResult(call) {
+      const response = await call()
+      if (!response || response.ok !== true) throw new Error(remoteErrorText(response?.error))
+      return response.value
     }
 
     function formatAmount(currency, amount) {
@@ -486,6 +571,249 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
       }
     }
 
+    function rowButton(disabled, primary) {
+      return {
+        flex: 'none',
+        height: 30,
+        padding: '0 12px',
+        borderRadius: TOKENS.radiusSm,
+        border: primary ? 'none' : `1px solid ${TOKENS.inputBorder}`,
+        background: primary ? (disabled ? TOKENS.skeleton : TOKENS.primary) : 'transparent',
+        color: primary ? TOKENS.primaryText : TOKENS.textSecondary,
+        font: 'inherit',
+        fontSize: 12,
+        whiteSpace: 'nowrap',
+        cursor: disabled ? 'default' : 'pointer',
+        opacity: disabled ? 0.55 : 1,
+      }
+    }
+
+    /**
+     * One extra console credential for a provider family. The value is staged in
+     * the browser and written through the Host credentials Remote, so it never
+     * rides a read path back to the page.
+     */
+    function CredentialRow(props) {
+      const tr = props.t
+      const refs = props.refs
+      const describeRef = React.useRef(props.describeCredentials)
+      const writeRef = React.useRef(props.writeCredential)
+      const removeRef = React.useRef(props.removeCredential)
+      describeRef.current = props.describeCredentials
+      writeRef.current = props.writeCredential
+      removeRef.current = props.removeCredential
+
+      const alive = React.useRef(true)
+      const [views, setViews] = React.useState(null)
+      const [loading, setLoading] = React.useState(true)
+      const [loadError, setLoadError] = React.useState('')
+      const [draft, setDraft] = React.useState('')
+      const [visible, setVisible] = React.useState(false)
+      const [busy, setBusy] = React.useState('')
+      const [notice, setNotice] = React.useState('')
+      const [error, setError] = React.useState(null)
+
+      const load = React.useCallback(async () => {
+        setLoading(true)
+        setLoadError('')
+        try {
+          const value = await credentialResult(() => describeRef.current(refs))
+          if (!alive.current) return
+          setViews(value && typeof value === 'object' ? value : {})
+        } catch (failure) {
+          if (!alive.current) return
+          setViews(null)
+          setLoadError(remoteErrorText(failure))
+        } finally {
+          if (alive.current) setLoading(false)
+        }
+      }, [refs])
+
+      React.useEffect(() => {
+        alive.current = true
+        load()
+        return () => {
+          alive.current = false
+        }
+      }, [load])
+
+      const configuredRefs = refs.filter((ref) => views?.[ref]?.configured === true)
+      const configured = configuredRefs.length > 0
+      const primaryWritable = views?.[refs[0]]?.writable !== false
+      const clearable = configuredRefs.some((ref) => views?.[ref]?.writable !== false)
+      const source = configuredRefs
+        .map((ref) => views?.[ref]?.source)
+        .find((value) => typeof value === 'string' && value.length > 0)
+      const disabled = busy !== '' || loading || loadError !== '' || !primaryWritable
+
+      const status = loading
+        ? tr('credentialLoading')
+        : configured
+          ? (configuredRefs[0] === refs[0]
+              ? tr('credentialConfigured')
+              : tr('credentialVia', { ref: configuredRefs[0] }))
+          : tr('credentialNotConfigured')
+
+      const save = async () => {
+        if (disabled) return
+        if (draft.trim() === '') {
+          setError({ key: 'credentialEmpty' })
+          setNotice('')
+          return
+        }
+        setBusy('save')
+        setError(null)
+        setNotice('')
+        try {
+          await credentialResult(() => writeRef.current(refs[0], draft))
+          if (!alive.current) return
+          setDraft('')
+          setNotice('credentialSaved')
+          await load()
+        } catch (failure) {
+          if (!alive.current) return
+          setError({ key: 'credentialSaveFailed', message: remoteErrorText(failure) })
+        } finally {
+          if (alive.current) setBusy('')
+        }
+      }
+
+      const clear = async () => {
+        if (disabled || !clearable) return
+        setBusy('clear')
+        setError(null)
+        setNotice('')
+        try {
+          for (const ref of configuredRefs) {
+            if (views?.[ref]?.writable === false) continue
+            await credentialResult(() => removeRef.current(ref))
+          }
+          if (!alive.current) return
+          await load()
+        } catch (failure) {
+          if (!alive.current) return
+          setError({ key: 'credentialClearFailed', message: remoteErrorText(failure) })
+        } finally {
+          if (alive.current) setBusy('')
+        }
+      }
+
+      return h('div', {
+        style: {
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 6,
+          padding: '12px 0',
+          borderTop: `0.5px solid ${TOKENS.border}`,
+        },
+      },
+      h('div', { style: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 } },
+        h('span', { style: { color: TOKENS.textStrong, fontSize: 13, fontWeight: 500 } }, props.label),
+        h('span', {
+          style: {
+            padding: '1px 6px',
+            borderRadius: 999,
+            background: 'var(--dsw-alias-bg-module-platform)',
+            color: configured ? TOKENS.textSecondary : TOKENS.textDim,
+            fontSize: 11,
+            lineHeight: '16px',
+            fontVariantNumeric: 'tabular-nums',
+          },
+        }, status),
+        source ? h('span', { style: { color: TOKENS.textDim, fontSize: 11 } }, tr('credentialSource', { source })) : null),
+      h('p', { style: { margin: 0, color: TOKENS.textDim, fontSize: 11, lineHeight: '16px' } }, props.hint),
+      h('div', { style: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 } },
+        h('input', {
+          type: visible ? 'text' : 'password',
+          value: draft,
+          placeholder: props.placeholder,
+          disabled,
+          autoComplete: 'off',
+          spellCheck: false,
+          'aria-label': props.label,
+          onChange: (event) => {
+            setDraft(event.target.value)
+            setError(null)
+            setNotice('')
+          },
+          onKeyDown: (event) => {
+            if (event.key === 'Enter') save()
+          },
+          style: {
+            flex: '1 1 220px',
+            minWidth: 0,
+            height: 30,
+            boxSizing: 'border-box',
+            padding: '0 10px',
+            borderRadius: TOKENS.radiusSm,
+            border: `1px solid ${TOKENS.inputBorder}`,
+            background: TOKENS.input,
+            color: TOKENS.textStrong,
+            font: 'inherit',
+            fontSize: 12,
+            outline: 'none',
+          },
+        }),
+        h('button', { type: 'button', disabled, onClick: () => setVisible((value) => !value), style: rowButton(disabled, false) },
+          visible ? tr('credentialHide') : tr('credentialShow')),
+        h('button', { type: 'button', disabled, onClick: save, style: rowButton(disabled, true) },
+          busy === 'save' ? tr('credentialSaving') : tr('credentialSave')),
+        configured ? h('button', {
+          type: 'button',
+          disabled: disabled || !clearable || busy !== '',
+          onClick: clear,
+          style: rowButton(disabled || !clearable || busy !== '', false),
+        }, busy === 'clear' ? tr('credentialClearing') : tr('credentialClear')) : null),
+      configured && !primaryWritable ? h('p', {
+        style: { margin: 0, color: TOKENS.textDim, fontSize: 11, lineHeight: '16px' },
+      }, tr('credentialReadOnly')) : null,
+      loadError ? h('p', {
+        role: 'alert',
+        style: { margin: 0, color: TOKENS.danger, fontSize: 11, lineHeight: '16px' },
+      }, tr('credentialLoadFailed', { message: loadError })) : null,
+      error ? h('p', {
+        role: 'alert',
+        style: { margin: 0, color: TOKENS.danger, fontSize: 11, lineHeight: '16px' },
+      }, tr(error.key, { message: error.message })) : null,
+      notice ? h('p', {
+        role: 'status',
+        style: { margin: 0, color: TOKENS.textSecondary, fontSize: 11, lineHeight: '16px' },
+      }, tr(notice)) : null)
+    }
+
+    /**
+     * Bundle configuration page: the console credentials that providers such as
+     * Xiaomi MiMo and Qwen Token Plan need in addition to their inference key.
+     */
+    function ProviderCredentialsPage(props) {
+      const tr = typeof props.t === 'function' ? props.t : fallbackTranslate
+      const credentialProps = {
+        t: tr,
+        describeCredentials: props.describeCredentials,
+        writeCredential: props.writeCredential,
+        removeCredential: props.removeCredential,
+      }
+      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+        h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, paddingBottom: 8 } },
+          h('h3', { style: { margin: 0, color: TOKENS.textStrong, fontSize: 13, fontWeight: 600 } }, tr('credentialsTitle')),
+          h('p', { style: { margin: 0, color: TOKENS.textSecondary, fontSize: 12, lineHeight: '18px' } }, tr('credentialsHint')),
+          h('p', { style: { margin: 0, color: TOKENS.textDim, fontSize: 11, lineHeight: '16px' } }, tr('credentialsEffective'))),
+        h(CredentialRow, {
+          ...credentialProps,
+          refs: MIMO_REFS,
+          label: tr('mimoCookie'),
+          hint: tr('mimoCookieHint'),
+          placeholder: tr('mimoCookiePlaceholder'),
+        }),
+        h(CredentialRow, {
+          ...credentialProps,
+          refs: QWEN_REFS,
+          label: tr('qwenToken'),
+          hint: tr('qwenTokenHint'),
+          placeholder: tr('qwenTokenPlaceholder'),
+        }))
+    }
+
     function QuotaPill({ useProjection, t }) {
       const tr = typeof t === 'function' ? t : fallbackTranslate
       const selection = useProjection('modelSelection')
@@ -789,6 +1117,21 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
           order: 2,
           locale: NS,
         }, QuotaPill))
+        // Kept optional: the quota pill must keep working on a deployment that
+        // mounts no credentials Remote. The page registers only while the
+        // Plugins page declares its bundle-configuration slot.
+        ctx.inject(['slots', 'remote', 'remote.credentials'], (scope) => {
+          scope.slots.inject('plugins.bundle.config', () => scope.slots.register({
+            name: 'plugins.bundle.config',
+            key: PACKAGE,
+            locale: NS,
+            inject: () => ({
+              describeCredentials: (refs) => scope.remote.credentials.describe(refs),
+              writeCredential: (ref, value) => scope.remote.credentials.set(ref, value),
+              removeCredential: (ref) => scope.remote.credentials.unset(ref),
+            }),
+          }, ProviderCredentialsPage))
+        })
       },
     }
   },

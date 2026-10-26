@@ -46,7 +46,7 @@ dsh Host
 | `providers/resolve.js` | 读取 DSH 实时 provider 配置，把 provider id 解析成额度路由（含 `config.providers` 覆盖与 MiMo 计费类型） |
 | `providers/shared.js` | 适配器共享工具：凭证读取、上游 HTTP、缓存指纹、统一响应片段 |
 | `providers/*.js` | 单个额度体系适配器（`account`、`deepseek`、`glm`、`kimi`、`minimax`、`moonshot`、`openrouter`、`qwen`、`vercel-gateway`、`xiaomi-mimo`） |
-| `client.js` | Client 插件：注册 locale 字典、向 composer dock 注册条目、模型选择标签/分组标题的额度装饰、轮询、渲染浮层 |
+| `client.js` | Client 插件：注册 locale 字典、向 composer dock 注册条目、模型选择标签/分组标题的额度装饰、轮询、渲染浮层；并向 `plugins.bundle.config` 注册供应商额外凭证配置页 |
 | `locale/*.json` | 插件管理页使用的标题/描述元数据 |
 | `icon.svg` | 插件图标 |
 
@@ -317,6 +317,20 @@ const provider = selection?.next?.provider ?? selection?.lastUsed?.provider ?? '
 
 `client.js` 内置 `zh`/`en` 两份字典，通过 `ctx.locale.register(NS, DICT)` 注册；slot 注册时传 `locale: NS`，框架会注入绑定后的 `t`。`locale/*.json` 只负责插件管理页的标题和描述。
 
+### 配置页面
+
+`client.js` 还向 Plugins 页的 `plugins.bundle.config` keyed slot 注册配置页，key 为包名 `@local/dsh-llm-quota`。页面出现在该 bundle 详情页的描述与行列表之间，用于补充供应商需要的控制台凭证：
+
+| 字段 | 凭据引用 |
+| --- | --- |
+| Xiaomi MiMo 控制台 Cookie | `MIMO_COOKIE` / `XIAOMI_MIMO_COOKIE` |
+| Qwen 控制台 Access Token | `QWEN_CONSOLE_TOKEN` / `BAILIAN_CONSOLE_TOKEN` |
+
+- 页面通过可选的 `ctx.inject(['slots', 'remote', 'remote.credentials'], ...)` 注册；缺少 credentials Remote 或 Plugins 页时页面不出现，composer dock 的额度条目不受影响。
+- 状态读取使用 `remote.credentials.describe(refs)`，只返回 `configured` / `source` / `writable`；保存与清除分别调用 `remote.credentials.set(ref, value)` 和 `remote.credentials.unset(ref)`，明文不会回传浏览器。
+- 主引用未配置但兼容别名已配置时，页面显示「已配置（别名）」；由环境变量或更高配置层提供的凭据 `writable: false`，页面显示只读。
+- 保存后 Host 的 30 秒成功缓存不会被主动清除，因此下一次额度刷新（客户端最长 60 秒）才会读到新凭证。
+
 ## 本地开发与验证
 
 ```bash
@@ -340,7 +354,8 @@ curl -i 'http://127.0.0.1:3090/api/llm-quota?provider=zai-coding-cn'
 2. 状态行应出现额度条目，且不影响原有条目。
 3. 点击条目应弹出浮层，Escape 可关闭。
 4. 切换模型后条目内容应随 provider 变化。
-5. 控制台不应出现 `slot entry crashed in 'conversation.composer.dock'`。
+5. Plugins → Installed plugins → 模型额度 的详情页应出现「供应商额外凭证」，保存/清除后状态应即时变化。
+6. 控制台不应出现 `slot entry crashed in 'conversation.composer.dock'`。
 
 ### 改动后的加载行为
 

@@ -126,11 +126,25 @@ npx -y pnpm@10 remove @local/dsh-llm-quota
 
 3. 重启 dsh，或重载页面。
 
+## 配置页面
+
+部分供应商除推理 Key 外还需要一份控制台凭证。打开 Web 侧边栏的 **Plugins**，在 **Installed plugins** 中进入「模型额度」（`@local/dsh-llm-quota`）的详情页，即可在描述下方看到「供应商额外凭证」：
+
+| 字段 | 凭据引用 | 用途 |
+| --- | --- | --- |
+| Xiaomi MiMo 控制台 Cookie | `MIMO_COOKIE`（兼容 `XIAOMI_MIMO_COOKIE`） | `xiaomi` / `xiaomi-token-plan-*` 的余额与套餐额度 |
+| Qwen 控制台 Access Token | `QWEN_CONSOLE_TOKEN`（兼容 `BAILIAN_CONSOLE_TOKEN`） | `qwen-token-plan*` 的 Token Plan 额度 |
+
+- 值通过 Host 的 `credentials` Remote 写入凭据库，浏览器只能读到「已配置 / 未配置」与来源，读不到明文。
+- 保存后在下一次额度刷新时生效（最长约 60 秒）；清除会移除对应的可写凭据。
+- 由环境变量或更高配置层提供的凭证会显示为只读，无法在页面中覆盖。
+- 页面是可选注册：缺少 `credentials` Remote 或 Plugins 页时，状态行额度功能不受影响。
+
 ## 配置
 
 默认情况下，插件通过 DSH 的 provider directory 和 Loader 实时配置确定凭证引用与推理主机，再映射到固定的额度端点。只有 `api.deepseek.com`、`api.z.ai`、`open.bigmodel.cn`、`api.kimi.com`、`api.moonshot.cn`、`api.moonshot.ai`、`openrouter.ai`、`ai-gateway.vercel.sh`、`token-plan.*.maas.aliyuncs.com` 和 `*.xiaomimimo.com` 会自动适配；OAuth-only 和未知代理主机不会收到凭证。自定义代理需要显式配置额度端点。
 
-Xiaomi MiMo 需要两份凭证：推理 Key 放在 `XIAOMI_API_KEY`（模型路由使用），额度 Cookie 放在 `MIMO_COOKIE`。插件按 provider 类型读取对应数据：`xiaomi`（`api.xiaomimimo.com`）只显示按量余额，`xiaomi-token-plan-*`（`token-plan-*.xiaomimimo.com`）只显示 Token Plan 额度。Cookie 获取方式：登录 `platform.xiaomimimo.com`，从任意 `/api/v1/` 请求复制完整的 `Cookie` 请求头，至少包含 `serviceToken` 与 `userId`，然后写入 `$DSH_HOME/.credentials.yaml` 的 `refs` 段：
+Xiaomi MiMo 需要两份凭证：推理 Key 放在 `XIAOMI_API_KEY`（模型路由使用），额度 Cookie 放在 `MIMO_COOKIE`。推荐直接在[配置页面](#配置页面)填写；也可以手动写入 `$DSH_HOME/.credentials.yaml` 的 `refs` 段。插件按 provider 类型读取对应数据：`xiaomi`（`api.xiaomimimo.com`）只显示按量余额，`xiaomi-token-plan-*`（`token-plan-*.xiaomimimo.com`）只显示 Token Plan 额度。Cookie 获取方式：登录 `platform.xiaomimimo.com`，从任意 `/api/v1/` 请求复制完整的 `Cookie` 请求头，至少包含 `serviceToken` 与 `userId`。
 
 ```yaml
 refs:
@@ -140,7 +154,7 @@ refs:
 
 只追加这一行，保留已有的 `records` 与其他 refs 不动；也可以改用环境变量 `MIMO_COOKIE`。Cookie 过期后重新复制。完整步骤见 [providers.md](./providers.md#xiaomi-mimo-开放平台按量余额--token-plan)。
 
-Moonshot 开放平台（`moonshotai` / `moonshotai-cn`）直接使用推理 Key 读取 `/v1/users/me/balance`，不需要额外配置。Qwen Token Plan 的 `sk-sp-*` 推理 Key 不能查询套餐额度，需要额外提供控制台 access token（凭据名 `QWEN_CONSOLE_TOKEN`），获取方式见 [providers.md](./providers.md#阿里云百炼-qwen-token-plan)。
+Moonshot 开放平台（`moonshotai` / `moonshotai-cn`）直接使用推理 Key 读取 `/v1/users/me/balance`，不需要额外配置。Qwen Token Plan 的 `sk-sp-*` 推理 Key 不能查询套餐额度，需要额外提供控制台 access token（凭据名 `QWEN_CONSOLE_TOKEN`）。推荐直接在[配置页面](#配置页面)填写，获取方式见 [providers.md](./providers.md#阿里云百炼-qwen-token-plan)。
 
 插件行支持可选的 `config`：
 

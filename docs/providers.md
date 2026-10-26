@@ -313,7 +313,7 @@ DSH 的 `qwen-token-plan`、`qwen-token-plan-cn`、`qwen-token-plan-individual` 
 获取方式：
 
 1. 安装并登录官方 CLI：`bl auth login --console`。
-2. 从 `~/.bailian/config.json` 复制 `access_token`，写入 DSH 凭据库的 `QWEN_CONSOLE_TOKEN`（也兼容 `BAILIAN_CONSOLE_TOKEN`）。
+2. 从 `~/.bailian/config.json` 复制 `access_token`，推荐直接在插件配置页的「Qwen 控制台 Access Token」中保存；也可以写入 DSH 凭据库的 `QWEN_CONSOLE_TOKEN`（也兼容 `BAILIAN_CONSOLE_TOKEN`）。
 
 ```yaml
 refs:
@@ -393,7 +393,7 @@ MiMo 需要两份互不替代的凭证：推理 Key（`sk-*`）用于实际调�
 
 **2. 额度 Cookie**
 
-编辑 `$DSH_HOME/.credentials.yaml`，在 `refs` 段追加一行（保留已有的 `records` 与其他 refs 不动）：
+推荐在 Web 侧边栏 **Plugins → Installed plugins → 模型额度** 的「供应商额外凭证」中填写 Cookie；也可以手动编辑 `$DSH_HOME/.credentials.yaml`，在 `refs` 段追加一行（保留已有的 `records` 与其他 refs 不动）：
 
 ```yaml
 refs:
