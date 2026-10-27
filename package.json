@@ -26,7 +26,7 @@
   },
   "scripts": {
     "check": "node --check index.js && node --check client.js && node -e \"const{readdirSync}=require('node:fs');const{execFileSync}=require('node:child_process');for(const f of readdirSync('providers'))execFileSync(process.execPath,['--check','providers/'+f],{stdio:'inherit'})\"",
-    "test": "node --test test/host.test.js"
+    "test": "node --test test/host.test.js test/*.test.js"
   },
   "engines": {
     "dsh": ">=0.2.1-rc.2 <0.2.2"

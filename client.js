@@ -14,9 +14,42 @@ window.__ModuleLoader__.load({
     const PANEL_WIDTH = 296
 
     // Credential references the provider adapters resolve, primary name first.
-    // The aliases keep parity with providers/qwen.js and providers/xiaomi-mimo.js.
+    // The aliases keep parity with providers/qwen.js, providers/xai.js and
+    // providers/xiaomi-mimo.js.
     const MIMO_REFS = ['MIMO_COOKIE', 'XIAOMI_MIMO_COOKIE']
     const QWEN_REFS = ['QWEN_CONSOLE_TOKEN', 'BAILIAN_CONSOLE_TOKEN']
+    const XAI_REFS = ['XAI_MANAGEMENT_KEY', 'XAI_MANAGEMENT_API_KEY']
+    const ADMIN_KEY_REFS = ['ANTHROPIC_ADMIN_KEY', 'ANTHROPIC_ADMIN_API_KEY', 'OPENAI_ADMIN_KEY', 'OPENAI_ADMIN_API_KEY']
+    const GITHUB_TOKEN_REFS = ['COPILOT_GITHUB_TOKEN', 'GITHUB_TOKEN', 'GH_TOKEN']
+    const CODEX_TOKEN_REFS = ['OPENAI_CODEX_TOKEN', 'OPENAI_CODEX_OAUTH_TOKEN', 'CHATGPT_OAUTH_TOKEN']
+    const CODEX_ACCOUNT_REFS = ['OPENAI_CODEX_ACCOUNT_ID', 'CHATGPT_ACCOUNT_ID']
+    const CLOUDFLARE_TOKEN_REFS = ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_API_KEY']
+    const CLOUDFLARE_ACCOUNT_REFS = ['CLOUDFLARE_ACCOUNT_ID']
+
+    // Providers that report month-to-date spend instead of a balance or plan.
+    const USAGE_KINDS = new Set(['anthropic', 'baseten', 'fireworks', 'huggingface', 'openai', 'together'])
+    const TITLES = {
+      anthropic: 'Anthropic',
+      baseten: 'Baseten',
+      cloudflare: 'Cloudflare',
+      fireworks: 'Fireworks',
+      'github-copilot': 'GitHub Copilot',
+      huggingface: 'Hugging Face',
+      openai: 'OpenAI',
+      'openai-codex': 'OpenAI Codex',
+      'opencode-go': 'OpenCode Go',
+      radius: 'Radius',
+      together: 'Together AI',
+      xai: 'xAI',
+    }
+    // Extra-credential providers label their "not configured" hint precisely.
+    const MISSING_CREDENTIAL_LABEL = {
+      anthropic: 'missingAdminKey',
+      openai: 'missingAdminKey',
+      'github-copilot': 'missingGitHubToken',
+      'openai-codex': 'missingCodexToken',
+      cloudflare: 'missingCloudflareCredential',
+    }
 
     const DICT = {
       zh: {
@@ -40,6 +73,10 @@ window.__ModuleLoader__.load({
         stale: '数据可能已过期',
         error: '额度暂不可用',
         missingCredential: '未配置 API Key',
+        missingAdminKey: '未配置 Admin Key',
+        missingGitHubToken: '未配置 GitHub Token',
+        missingCodexToken: '未配置 ChatGPT OAuth Token',
+        missingCloudflareCredential: '未配置 Cloudflare API Token 或 Account ID',
         missingCookie: '未配置 MiMo 控制台 Cookie',
         signedOut: '请先登录 DeepSeek',
         mimoTitle: 'Xiaomi MiMo',
@@ -63,6 +100,19 @@ window.__ModuleLoader__.load({
         creditsRemaining: '剩余额度',
         creditsPurchased: '已购买额度',
         creditsUsed: '已使用',
+        usedMonth: '本月已用 {amount}',
+        usedMonthName: '本月已用',
+        usedRequests: '本月已用 {count} 次',
+        requestCountName: '请求数',
+        tokenUsage: '输入 / 输出 Tokens',
+        copilotPremium: 'Premium 请求',
+        copilotChat: 'Chat 额度',
+        planLeft: '套餐剩 {percent}%',
+        monthlyName: '月额度',
+        creditsApplied: '已用抵扣',
+        chargedAmount: '实付小计',
+        cycleUsage: '本期已用',
+        missingManagementKey: '未配置 xAI Management Key',
         badgeFiveHour: '5h {percent}%',
         badgeWeekly: '周 {percent}%',
         badgePlan: '套餐 {percent}%',
@@ -75,6 +125,27 @@ window.__ModuleLoader__.load({
         qwenToken: 'Qwen 控制台 Access Token',
         qwenTokenHint: '用于 qwen-token-plan 供应商。执行 bl auth login --console 后，从 ~/.bailian/config.json 复制 access_token。',
         qwenTokenPlaceholder: '粘贴控制台 access_token',
+        xaiKey: 'xAI Management Key',
+        xaiKeyHint: '用于 xai 供应商的余额查询。推理 API Key 无法读取账单，请在 console.x.ai → Settings → Management Keys 创建只读 Key（需 Team 作用域）。',
+        xaiKeyPlaceholder: 'xai-...',
+        adminKey: 'Anthropic / OpenAI Admin Key',
+        adminKeyHint: '用于 anthropic 与 openai 供应商的本月用量查询。普通推理 Key 无法读取用量：Anthropic 在 Console → Settings → Admin Keys 创建 sk-ant-admin…，OpenAI 在 platform.openai.com → Admin keys 创建 sk-admin…（需组织 Owner）。',
+        adminKeyPlaceholder: 'sk-ant-admin-… / sk-admin-…',
+        githubToken: 'GitHub Token（Copilot 额度）',
+        githubTokenHint: '用于 github-copilot 供应商的 Premium Requests 配额查询。任意 GitHub Token（ghp_ / gho_ / fine-grained 且 Plan: read）均可。',
+        githubTokenPlaceholder: 'ghp_… / gho_…',
+        codexToken: 'ChatGPT OAuth Token（Codex 额度）',
+        codexTokenHint: '用于 openai-codex 供应商的 5 小时 / 周配额查询。取 ChatGPT OAuth access token（如 Codex CLI 登录后的凭证），接口非公开、可能变动。',
+        codexTokenPlaceholder: 'eyJ…',
+        codexAccount: 'ChatGPT Account ID',
+        codexAccountHint: 'openai-codex 配额查询所需的 ChatGPT-Account-Id 头，与上面的 Token 配套使用。',
+        codexAccountPlaceholder: 'account_…',
+        cloudflareToken: 'Cloudflare API Token',
+        cloudflareTokenHint: '用于 cloudflare 供应商的余额 / 花费查询。需账户级 API Token（AI Gateway Read / Billing Read 权限），与推理用 Token 分开。',
+        cloudflareTokenPlaceholder: '粘贴 API Token',
+        cloudflareAccount: 'Cloudflare Account ID',
+        cloudflareAccountHint: 'cloudflare 查询所需的账户 ID，可在 Cloudflare Dashboard 右侧栏查看。',
+        cloudflareAccountPlaceholder: '32 位十六进制 Account ID',
         credentialConfigured: '已配置',
         credentialNotConfigured: '未配置',
         credentialVia: '已配置（{ref}）',
@@ -114,6 +185,10 @@ window.__ModuleLoader__.load({
         stale: 'Data may be stale',
         error: 'Quota unavailable',
         missingCredential: 'API key not configured',
+        missingAdminKey: 'Admin key not configured',
+        missingGitHubToken: 'GitHub token not configured',
+        missingCodexToken: 'ChatGPT OAuth token not configured',
+        missingCloudflareCredential: 'Cloudflare API token or account ID not configured',
         missingCookie: 'MiMo console cookie not configured',
         signedOut: 'Sign in to DeepSeek',
         mimoTitle: 'Xiaomi MiMo',
@@ -137,6 +212,19 @@ window.__ModuleLoader__.load({
         creditsRemaining: 'Credits remaining',
         creditsPurchased: 'Credits purchased',
         creditsUsed: 'Usage',
+        usedMonth: 'Month to date {amount}',
+        usedMonthName: 'Used this month',
+        usedRequests: '{count} requests this month',
+        requestCountName: 'Requests',
+        tokenUsage: 'Input / output tokens',
+        copilotPremium: 'Premium requests',
+        copilotChat: 'Chat allowance',
+        planLeft: 'Plan {percent}% left',
+        monthlyName: 'Monthly quota',
+        creditsApplied: 'Credits applied',
+        chargedAmount: 'Charged subtotal',
+        cycleUsage: 'Billing cycle usage',
+        missingManagementKey: 'xAI management key not configured',
         badgeFiveHour: '5h {percent}%',
         badgeWeekly: 'Wk {percent}%',
         badgePlan: 'Plan {percent}%',
@@ -149,6 +237,27 @@ window.__ModuleLoader__.load({
         qwenToken: 'Qwen console access token',
         qwenTokenHint: 'Used by qwen-token-plan providers. Run bl auth login --console and copy access_token from ~/.bailian/config.json.',
         qwenTokenPlaceholder: 'Paste the console access_token',
+        xaiKey: 'xAI management key',
+        xaiKeyHint: 'Used for the xai provider quota. Inference API keys cannot read billing; create a read-only, team-scoped key under console.x.ai → Settings → Management Keys.',
+        xaiKeyPlaceholder: 'xai-...',
+        adminKey: 'Anthropic / OpenAI admin key',
+        adminKeyHint: 'Used for the anthropic and openai month-to-date usage. Plain inference keys cannot read usage: create sk-ant-admin… under Console → Settings → Admin Keys (Anthropic) or sk-admin… under platform.openai.com → Admin keys (OpenAI, organization owner only).',
+        adminKeyPlaceholder: 'sk-ant-admin-… / sk-admin-…',
+        githubToken: 'GitHub token (Copilot quota)',
+        githubTokenHint: 'Used for the github-copilot premium request quota. Any GitHub token works (ghp_ / gho_ / fine-grained with Plan: read).',
+        githubTokenPlaceholder: 'ghp_… / gho_…',
+        codexToken: 'ChatGPT OAuth token (Codex quota)',
+        codexTokenHint: 'Used for the openai-codex 5-hour / weekly windows. Provide a ChatGPT OAuth access token (for example from the Codex CLI login); the endpoint is unofficial and may change.',
+        codexTokenPlaceholder: 'eyJ…',
+        codexAccount: 'ChatGPT account ID',
+        codexAccountHint: 'The ChatGPT-Account-Id header value used together with the token above.',
+        codexAccountPlaceholder: 'account_…',
+        cloudflareToken: 'Cloudflare API token',
+        cloudflareTokenHint: 'Used for the cloudflare balance / spend query. Needs an account-level API token (AI Gateway Read / Billing Read); keep it separate from the inference token.',
+        cloudflareTokenPlaceholder: 'Paste the API token',
+        cloudflareAccount: 'Cloudflare account ID',
+        cloudflareAccountHint: 'The account ID the cloudflare query targets; shown in the Cloudflare Dashboard sidebar.',
+        cloudflareAccountPlaceholder: '32-character account ID',
         credentialConfigured: 'Configured',
         credentialNotConfigured: 'Not configured',
         credentialVia: 'Configured ({ref})',
@@ -330,6 +439,26 @@ window.__ModuleLoader__.load({
           ? tr('qwenPlanLeft', { percent: data.plan.remainingPercent })
           : tr('error')
       }
+      if (data.kind === 'github-copilot') {
+        return data.plan && Number.isFinite(data.plan.remainingPercent)
+          ? tr('planLeft', { percent: data.plan.remainingPercent })
+          : tr('error')
+      }
+      if (data.kind === 'xai' || data.kind === 'cloudflare') {
+        if (data.amount !== undefined) {
+          return tr('balance', { amount: formatAmount(data.currency, data.amount) })
+        }
+        return tr('usedMonth', { amount: formatAmount(data.currency, data.cycleUsage) })
+      }
+      if (USAGE_KINDS.has(data.kind)) {
+        if (data.usedAmount !== undefined) {
+          return tr('usedMonth', { amount: formatAmount(data.currency, data.usedAmount) })
+        }
+        if (Number.isFinite(data.requestCount)) {
+          return tr('usedRequests', { count: data.requestCount })
+        }
+        return tr('error')
+      }
       const parts = []
       if (data.fiveHour) parts.push(tr('fiveHour', { percent: data.fiveHour.remainingPercent }))
       if (data.weekly) parts.push(tr('weekly', { percent: data.weekly.remainingPercent }))
@@ -354,6 +483,20 @@ window.__ModuleLoader__.load({
           ? tr('badgePlan', { percent: data.plan.remainingPercent })
           : ''
       }
+      if (data.kind === 'github-copilot') {
+        return data.plan && Number.isFinite(data.plan.remainingPercent)
+          ? tr('badgePlan', { percent: data.plan.remainingPercent })
+          : ''
+      }
+      if (data.kind === 'xai' || data.kind === 'cloudflare') {
+        return data.amount !== undefined
+          ? formatAmount(data.currency, data.amount)
+          : formatAmount(data.currency, data.cycleUsage)
+      }
+      if (USAGE_KINDS.has(data.kind)) {
+        if (data.usedAmount !== undefined) return formatAmount(data.currency, data.usedAmount)
+        return Number.isFinite(data.requestCount) ? String(data.requestCount) : ''
+      }
       const parts = []
       if (data.fiveHour && Number.isFinite(data.fiveHour.remainingPercent)) {
         parts.push(tr('badgeFiveHour', { percent: data.fiveHour.remainingPercent }))
@@ -367,7 +510,8 @@ window.__ModuleLoader__.load({
     function panelTitle(data, tr) {
       if (!data || data.ok === false) return tr('title')
       if (data.kind === 'balance') {
-        return data.service === 'moonshot' ? tr('moonshotTitle') : tr('balanceTitle')
+        if (data.service === 'moonshot') return tr('moonshotTitle')
+        return TITLES[data.service] ?? tr('balanceTitle')
       }
       if (data.kind === 'glm') return data.level ? `GLM ${capitalise(data.level)}` : 'GLM'
       if (data.kind === 'kimi') return 'Kimi'
@@ -386,14 +530,22 @@ window.__ModuleLoader__.load({
         return data.plan?.name ? `${tr('mimoTitle')} · ${data.plan.name}` : tr('mimoTitle')
       }
       if (data.kind === 'qwen') return `${tr('qwenTitle')} · ${tr('qwenTokenPlan')}`
+      if (data.kind === 'github-copilot') {
+        return data.planName ? `GitHub Copilot · ${data.planName}` : 'GitHub Copilot'
+      }
+      const titled = TITLES[data.kind]
+      if (titled) return titled
       return tr('balanceTitle')
     }
 
     function errorLabel(data, tr) {
       if (!data) return tr('error')
-      if (data.reason === 'missing-credential') return tr('missingCredential')
+      if (data.reason === 'missing-credential') {
+        return tr(MISSING_CREDENTIAL_LABEL[data.kind] ?? 'missingCredential')
+      }
       if (data.reason === 'missing-cookie') return tr('missingCookie')
       if (data.reason === 'missing-console-token') return tr('missingConsoleToken')
+      if (data.reason === 'missing-management-key') return tr('missingManagementKey')
       if (data.reason === 'signed-out') return tr('signedOut')
       return tr('error')
     }
@@ -811,6 +963,55 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
           label: tr('qwenToken'),
           hint: tr('qwenTokenHint'),
           placeholder: tr('qwenTokenPlaceholder'),
+        }),
+        h(CredentialRow, {
+          ...credentialProps,
+          refs: XAI_REFS,
+          label: tr('xaiKey'),
+          hint: tr('xaiKeyHint'),
+          placeholder: tr('xaiKeyPlaceholder'),
+        }),
+        h(CredentialRow, {
+          ...credentialProps,
+          refs: ADMIN_KEY_REFS,
+          label: tr('adminKey'),
+          hint: tr('adminKeyHint'),
+          placeholder: tr('adminKeyPlaceholder'),
+        }),
+        h(CredentialRow, {
+          ...credentialProps,
+          refs: GITHUB_TOKEN_REFS,
+          label: tr('githubToken'),
+          hint: tr('githubTokenHint'),
+          placeholder: tr('githubTokenPlaceholder'),
+        }),
+        h(CredentialRow, {
+          ...credentialProps,
+          refs: CODEX_TOKEN_REFS,
+          label: tr('codexToken'),
+          hint: tr('codexTokenHint'),
+          placeholder: tr('codexTokenPlaceholder'),
+        }),
+        h(CredentialRow, {
+          ...credentialProps,
+          refs: CODEX_ACCOUNT_REFS,
+          label: tr('codexAccount'),
+          hint: tr('codexAccountHint'),
+          placeholder: tr('codexAccountPlaceholder'),
+        }),
+        h(CredentialRow, {
+          ...credentialProps,
+          refs: CLOUDFLARE_TOKEN_REFS,
+          label: tr('cloudflareToken'),
+          hint: tr('cloudflareTokenHint'),
+          placeholder: tr('cloudflareTokenPlaceholder'),
+        }),
+        h(CredentialRow, {
+          ...credentialProps,
+          refs: CLOUDFLARE_ACCOUNT_REFS,
+          label: tr('cloudflareAccount'),
+          hint: tr('cloudflareAccountHint'),
+          placeholder: tr('cloudflareAccountPlaceholder'),
         }))
     }
 
@@ -904,6 +1105,9 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
         || data.kind === 'kimi'
         || data.kind === 'minimax'
         || data.kind === 'qwen'
+        || data.kind === 'github-copilot'
+        || data.kind === 'opencode-go'
+        || data.kind === 'openai-codex'
         || (data.kind === 'xiaomi-mimo' && data.mode !== 'balance')
       )
       const icon = isPlan ? h(GaugeIcon) : h(CoinIcon)
@@ -935,6 +1139,9 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
               rows.push(detailRow(tr('bonus'), formatAmount(wallet.currency, wallet.balance)))
             }
           }
+          if (data.cycleUsage !== undefined) {
+            rows.push(detailRow(tr('cycleUsage'), formatAmount(data.currency, data.cycleUsage)))
+          }
           if (typeof data.available === 'boolean') {
             rows.push(detailRow(tr('status'), data.available ? tr('available') : tr('insufficient')))
           }
@@ -944,6 +1151,16 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
           const rows = []
           if (data.plan && Number.isFinite(data.plan.remainingPercent)) {
             rows.push(detailRow(tr('qwenMonthly'), formatWindow(data.plan, tr), resetLabel(data.plan.resetAt, tr)))
+          }
+          return rows
+        }
+        if (data.kind === 'github-copilot') {
+          const rows = []
+          if (data.plan && Number.isFinite(data.plan.remainingPercent)) {
+            rows.push(detailRow(tr('copilotPremium'), formatWindow(data.plan, tr), resetLabel(data.plan.resetAt, tr)))
+          }
+          if (data.chat && Number.isFinite(data.chat.remainingPercent)) {
+            rows.push(detailRow(tr('copilotChat'), tr('remaining', { percent: data.chat.remainingPercent })))
           }
           return rows
         }
@@ -969,6 +1186,33 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
           for (const [label, window] of planRows) {
             if (!window || !Number.isFinite(window.remainingPercent)) continue
             rows.push(detailRow(label, formatWindow(window, tr), resetLabel(window.resetAt, tr)))
+          }
+          return rows
+        }
+        if (USAGE_KINDS.has(data.kind)) {
+          const rows = []
+          if (data.usedAmount !== undefined) {
+            rows.push(detailRow(tr('usedMonthName'), formatAmount(data.currency, data.usedAmount)))
+          }
+          if (Number.isFinite(data.requestCount)) {
+            rows.push(detailRow(tr('requestCountName'), String(data.requestCount)))
+          }
+          if (Number.isFinite(data.inputTokens) && Number.isFinite(data.outputTokens)) {
+            rows.push(detailRow(tr('tokenUsage'), `${data.inputTokens} / ${data.outputTokens}`))
+          }
+          if (Number.parseFloat(data.creditsAmount) > 0 && data.chargedAmount !== undefined) {
+            rows.push(detailRow(tr('creditsApplied'), formatAmount(data.currency, data.creditsAmount)))
+            rows.push(detailRow(tr('chargedAmount'), formatAmount(data.currency, data.chargedAmount)))
+          }
+          return rows
+        }
+        if (data.kind === 'xai' || data.kind === 'cloudflare') {
+          const rows = []
+          if (data.amount !== undefined) {
+            rows.push(detailRow(tr('creditsRemaining'), formatAmount(data.currency, data.amount)))
+          }
+          if (data.cycleUsage !== undefined) {
+            rows.push(detailRow(tr('cycleUsage'), formatAmount(data.currency, data.cycleUsage)))
           }
           return rows
         }
@@ -998,6 +1242,13 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
             tr('weeklyName'),
             tr('remaining', { percent: data.weekly.remainingPercent }),
             resetLabel(data.weekly.resetAt, tr),
+          ))
+        }
+        if (data.monthly) {
+          rows.push(detailRow(
+            tr('monthlyName'),
+            tr('remaining', { percent: data.monthly.remainingPercent }),
+            resetLabel(data.monthly.resetAt, tr),
           ))
         }
         return rows

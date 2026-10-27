@@ -57,6 +57,28 @@ export function toIso(value) {
   return Number.isNaN(date.getTime()) ? undefined : date.toISOString()
 }
 
+/**
+ * Current UTC calendar month in the shapes billing APIs ask for: the `YYYY-MM`
+ * period label and the day boundaries (end is exclusive of the next day).
+ */
+export function currentUtcMonth() {
+  const now = new Date()
+  const year = now.getUTCFullYear()
+  const month = now.getUTCMonth()
+  const pad = (value) => String(value).padStart(2, '0')
+  return {
+    month: `${year}-${pad(month + 1)}`,
+    startIso: new Date(Date.UTC(year, month, 1)).toISOString(),
+    endIso: new Date(Date.UTC(year, month, now.getUTCDate() + 1)).toISOString(),
+  }
+}
+
+/** Normalize a computed money value to a plain decimal string. */
+export function decimalAmount(value) {
+  const number = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(number) ? String(Number(number.toFixed(6))) : undefined
+}
+
 export function walletBalance(value) {
   if (typeof value === 'string' && value.length > 0) return value
   if (typeof value === 'number' && Number.isFinite(value)) return String(value)

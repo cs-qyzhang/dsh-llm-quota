@@ -345,7 +345,9 @@ test('does not call upstream for unsupported, inactive, unknown, or OAuth-only r
   for (const provider of ['openai', 'proxy-kimi', 'oauth-kimi', 'inactive', 'kimi-forged-alias']) {
     const data = await body(await host.request(provider))
     assert.equal(data.ok, false, provider)
-    assert.equal(data.reason, 'unsupported', provider)
+    // openai resolves to the usage adapter but reports the missing admin key;
+    // everything else stays unsupported without touching upstream.
+    assert.equal(data.reason, provider === 'openai' ? 'missing-credential' : 'unsupported', provider)
   }
   assert.equal(calls.length, 0)
 })
@@ -1209,4 +1211,159 @@ test('reports a missing Qwen console token without calling upstream', async (t) 
   assert.equal(data.ok, false)
   assert.equal(data.reason, 'missing-console-token')
   assert.equal(calls.length, 0)
+})
+
+test('reads Fireworks month-to-date spend through account discovery', async (t) => {
+  const host = createHarness({
+    providers: {
+      fireworks: { defaultBaseURL: 'https://api.fireworks.ai/v1', nativeEnv: ['FIREWORKS_API_KEY'] },
+    },
+    keys: { FIREWORKS_API_KEY: 'fw-key' },
+  })
+  const calls = mockFetch(t, async (url) => {
+    if (String(url).endsWith('/accounts')) return json({ accounts: [{ name: 'accounts/acme' }] })
+    return json({
+      lineItems: [
+        { category: 'Text Completion', totalCost: { currencyCode: 'USD', units: '12', nanos: 340_000_000 } },
+        { category: 'Audio', totalCost: { currencyCode: 'USD', units: '0', nanos: 660_000_000 } },
+      ],
+    })
+  })
+
+  const data = await body(await host.request('fireworks'))
+  assert.equal(data.ok, true)
+  assert.equal(data.kind, 'fireworks')
+  assert.equal(data.currency, 'USD')
+  assert.equal(data.usedAmount, '13')
+  assert.equal(calls[0].url, 'https://api.fireworks.ai/v1/accounts')
+  assert.match(calls[1].url, /^https:\/\/api\.fireworks\.ai\/v1\/accounts\/acme\/billing\/summary\?startTime=/)
+  assert.equal(calls[1].init.headers.Authorization, 'Bearer fw-key')
+})
+
+test('reads Baseten month-to-date usage with its credit split', async (t) => {
+  const host = createHarness({
+    providers: {
+      baseten: { defaultBaseURL: 'https://inference.baseten.co/v1', nativeEnv: ['BASETEN_API_KEY'] },
+    },
+    keys: { BASETEN_API_KEY: 'bt-key' },
+  })
+  const calls = mockFetch(t, async () => json({
+    dedicated_usage: null,
+    training_usage: null,
+    model_apis_usage: { subtotal: '3', credits_used: '1', total: '4' },
+  }))
+
+  const data = await body(await host.request('baseten'))
+  assert.equal(data.ok, true)
+  assert.equal(data.kind, 'baseten')
+  assert.equal(data.usedAmount, '4')
+  assert.equal(data.creditsAmount, '1')
+  assert.equal(data.chargedAmount, '3')
+  assert.match(calls[0].url, /^https:\/\/api\.baseten\.co\/v1\/billing\/usage_summary\?start_date=/)
+  assert.equal(calls[0].init.headers.Authorization, 'Bearer bt-key')
+})
+
+test('reads Together AI month-to-date usage costs', async (t) => {
+  const host = createHarness({
+    providers: {
+      together: { defaultBaseURL: 'https://api.together.ai/v1', nativeEnv: ['TOGETHER_API_KEY'] },
+    },
+    keys: { TOGETHER_API_KEY: 'tg-key' },
+  })
+  const calls = mockFetch(t, async () => json({
+    object: 'list',
+    currency: 'USD',
+    data: [{ date: '2026-10-01', line_items: [{ cost: '0.25' }, { cost: '0.75' }] }],
+  }))
+
+  const data = await body(await host.request('together'))
+  assert.equal(data.ok, true)
+  assert.equal(data.kind, 'together')
+  assert.equal(data.usedAmount, '1')
+  assert.match(calls[0].url, /^https:\/\/api\.together\.ai\/v1\/billing\/usage\?month=\d{4}-\d{2}$/)
+  assert.equal(calls[0].init.headers.Authorization, 'Bearer tg-key')
+})
+
+test('reports missing keys for the usage adapters without calling upstream', async (t) => {
+  const cases = [
+    ['fireworks', 'https://api.fireworks.ai/v1', 'FIREWORKS_API_KEY'],
+    ['baseten', 'https://inference.baseten.co/v1', 'BASETEN_API_KEY'],
+    ['together', 'https://api.together.ai/v1', 'TOGETHER_API_KEY'],
+  ]
+  const calls = mockFetch(t, async () => json({}))
+  for (const [provider, defaultBaseURL, env] of cases) {
+    const host = createHarness({
+      providers: { [provider]: { defaultBaseURL, nativeEnv: [env] } },
+      keys: {},
+    })
+    const data = await body(await host.request(provider))
+    assert.equal(data.reason, 'missing-credential', provider)
+  }
+  assert.equal(calls.length, 0)
+})
+
+test('rejects invalid usage payloads as temporary failures', async (t) => {
+  const fireworks = createHarness({
+    providers: { fireworks: { defaultBaseURL: 'https://api.fireworks.ai/v1', nativeEnv: ['FIREWORKS_API_KEY'] } },
+    keys: { FIREWORKS_API_KEY: 'fw-key' },
+  })
+  const together = createHarness({
+    providers: { together: { defaultBaseURL: 'https://api.together.ai/v1', nativeEnv: ['TOGETHER_API_KEY'] } },
+    keys: { TOGETHER_API_KEY: 'tg-key' },
+  })
+  mockFetch(t, async () => json({}))
+
+  const fireworksData = await body(await fireworks.request('fireworks'))
+  assert.equal(fireworksData.reason, 'error')
+  assert.match(fireworksData.error, /invalid quota response|no accessible/)
+
+  const togetherData = await body(await together.request('together'))
+  assert.equal(togetherData.reason, 'error')
+  assert.match(togetherData.error, /invalid quota response/)
+})
+
+test('reads xAI prepaid balance and billing-cycle spend via the management key', async (t) => {
+  const host = createHarness({
+    providers: {
+      xai: { defaultBaseURL: 'https://api.x.ai/v1', nativeEnv: ['XAI_API_KEY'] },
+    },
+    keys: { XAI_API_KEY: 'inference-key', XAI_MANAGEMENT_KEY: 'mg-key' },
+  })
+  const calls = mockFetch(t, async (url) => {
+    const text = String(url)
+    if (text.endsWith('/auth/management-keys/validation')) return json({ scope: 'SCOPE_TEAM', scopeId: 'team-1' })
+    if (text.endsWith('/prepaid/balance')) return json({ changes: [], total: { val: '-4500' } })
+    return json({ coreInvoice: { totalWithCorr: { val: '1234' } }, billingCycle: { year: 2026, month: 10 } })
+  })
+
+  const data = await body(await host.request('xai'))
+  assert.equal(data.ok, true)
+  assert.equal(data.kind, 'xai')
+  assert.equal(data.currency, 'USD')
+  assert.equal(data.amount, '45')
+  assert.equal(data.cycleUsage, '12.34')
+  assert.deepEqual(calls.map((call) => call.url), [
+    'https://management-api.x.ai/auth/management-keys/validation',
+    'https://management-api.x.ai/v1/billing/teams/team-1/prepaid/balance',
+    'https://management-api.x.ai/v1/billing/teams/team-1/postpaid/invoice/preview',
+  ])
+  assert.equal(calls[0].init.headers.Authorization, 'Bearer mg-key')
+})
+
+test('reports a missing xAI management key and rejects non-team-scoped keys', async (t) => {
+  const providers = {
+    xai: { defaultBaseURL: 'https://api.x.ai/v1', nativeEnv: ['XAI_API_KEY'] },
+  }
+  const missing = createHarness({ providers, keys: { XAI_API_KEY: 'inference-key' } })
+  let calls = mockFetch(t, async () => json({}))
+  const missingData = await body(await missing.request('xai'))
+  assert.equal(missingData.reason, 'missing-management-key')
+  assert.equal(calls.length, 0)
+
+  const scoped = createHarness({ providers, keys: { XAI_MANAGEMENT_KEY: 'mg-key' } })
+  calls = mockFetch(t, async () => json({ scope: 'SCOPE_ORGANIZATION', scopeId: 'org-1' }))
+  const scopedData = await body(await scoped.request('xai'))
+  assert.equal(scopedData.reason, 'error')
+  assert.match(scopedData.error, /not team-scoped/)
+  assert.equal(calls.length, 1)
 })

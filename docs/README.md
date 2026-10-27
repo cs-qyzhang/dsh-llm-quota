@@ -8,6 +8,7 @@
 | --- | --- |
 | [architecture.md](architecture.md) | Host / Client 如何协作、状态行与模型标签的渲染位置、缓存与超时、浮层、本地验证 |
 | [providers.md](providers.md) | 支持的供应商、请求与响应格式、自定义 provider、接入新额度体系 |
+| [dsh-providers.md](dsh-providers.md) | dsh 全部三方模型 Provider，插件支持与不支持的清单及原因 |
 
 ## 阅读顺序
 

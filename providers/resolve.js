@@ -7,9 +7,16 @@
  */
 
 import * as account from './account.js'
+import * as anthropic from './anthropic.js'
+import * as cloudflare from './cloudflare.js'
+import * as githubCopilot from './github-copilot.js'
+import * as openai from './openai.js'
+import * as openaiCodex from './openai-codex.js'
+import * as opencodeGo from './opencode-go.js'
 import { routeFromBaseURL } from './index.js'
 import { withCacheKey } from './shared.js'
 import * as qwen from './qwen.js'
+import * as xai from './xai.js'
 import * as xiaomiMimo from './xiaomi-mimo.js'
 
 const ACCOUNT_PROVIDER = 'deepseek-account'
@@ -27,6 +34,9 @@ export function resolveRoute(ctx, provider, overrides) {
     const route = { ...custom, provider }
     if (route.kind === xiaomiMimo.kind && route.mode === undefined) {
       route.mode = xiaomiMimo.billingMode(provider)
+    }
+    if (route.kind === xai.kind && route.keyNames === undefined) {
+      route.keyNames = xai.MANAGEMENT_KEY_NAMES
     }
     if (route.kind === qwen.kind && route.keyNames === undefined) {
       route.keyNames = qwen.TOKEN_NAMES
@@ -66,9 +76,65 @@ export function resolveRoute(ctx, provider, overrides) {
         keyNames: qwen.TOKEN_NAMES,
       })
     }
+    // xAI billing is read through the console Management Key, never the
+    // inference key that the pi-ai profile resolves.
+    const xaiRoute = xai.routeFor(baseURL)
+    if (xaiRoute) {
+      return withCacheKey({
+        provider,
+        kind: xai.kind,
+        ...xaiRoute,
+        keyNames: xai.MANAGEMENT_KEY_NAMES,
+      })
+    }
     const keyNames = profile.apiKeyEnv
       ? [profile.apiKeyEnv]
       : [...(directory.nativeAuth?.env ?? [])]
+
+    // Quota for these providers is read through a dedicated credential (an
+    // admin key, a GitHub token, a ChatGPT OAuth token, or an account-level
+    // token), never the inference key, so resolve them even for OAuth-only
+    // routes; without the credential the adapter reports what is missing.
+    const anthropicRoute = anthropic.routeFor(baseURL)
+    if (anthropicRoute) {
+      return withCacheKey({ provider, kind: anthropic.kind, ...anthropicRoute })
+    }
+    const openaiRoute = openai.routeFor(baseURL)
+    if (openaiRoute) {
+      return withCacheKey({ provider, kind: openai.kind, ...openaiRoute })
+    }
+    const copilotRoute = githubCopilot.routeFor(baseURL)
+    if (copilotRoute) {
+      return withCacheKey({
+        provider,
+        kind: githubCopilot.kind,
+        ...copilotRoute,
+        keyNames: mergeNames(githubCopilot.KEY_NAMES, keyNames),
+      })
+    }
+    const codexRoute = openaiCodex.routeFor(baseURL)
+    if (codexRoute) {
+      return withCacheKey({ provider, kind: openaiCodex.kind, ...codexRoute })
+    }
+    const goRoute = opencodeGo.routeFor(baseURL)
+    if (goRoute) {
+      return withCacheKey({
+        provider,
+        kind: opencodeGo.kind,
+        ...goRoute,
+        keyNames: mergeNames(opencodeGo.KEY_NAMES, keyNames),
+      })
+    }
+    const cloudflareRoute = cloudflare.routeFor(baseURL)
+    if (cloudflareRoute) {
+      return withCacheKey({
+        provider,
+        kind: cloudflare.kind,
+        ...cloudflareRoute,
+        keyNames: mergeNames(cloudflare.KEY_NAMES, keyNames),
+      })
+    }
+
     if (keyNames.length === 0 && directory.nativeAuth?.oauth) return undefined
     return routeFromBaseURL(provider, baseURL, keyNames)
   }
@@ -92,4 +158,13 @@ function isXiaomiMimoHost(baseURL) {
   } catch {
     return false
   }
+}
+
+/** Union of credential names, primary list first, without duplicates. */
+function mergeNames(primary, fallback) {
+  const names = []
+  for (const name of [...primary, ...fallback]) {
+    if (typeof name === 'string' && name.length > 0 && !names.includes(name)) names.push(name)
+  }
+  return names
 }
