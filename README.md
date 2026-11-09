@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/@cs-qyzhang/dsh-llm-quota?label=npm)](https://www.npmjs.com/package/@cs-qyzhang/dsh-llm-quota)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![dsh](https://img.shields.io/badge/dsh-0.2.1--rc.4-blue)](https://github.com/deepseek-ai/deepseek-harness)
+[![dsh](https://img.shields.io/badge/dsh-0.2.2--rc.1-blue)](https://github.com/deepseek-ai/deepseek-harness)
 
 在 DeepSeek Harness（dsh）的状态行与模型选择器中，实时显示当前模型供应商的剩余余额或 Coding Plan 额度——不用切回控制台，写代码时随时掌握额度还剩多少。
 
