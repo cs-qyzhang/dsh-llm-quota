@@ -1,6 +1,6 @@
 {
   "name": "@cs-qyzhang/dsh-llm-quota",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "type": "module",
   "description": "Shows the active model provider's remaining balance or coding-plan quota below the composer.",
   "license": "MIT",
@@ -29,7 +29,7 @@
     "test": "node --test test/host.test.js test/*.test.js"
   },
   "engines": {
-    "dsh": ">=0.2.1-rc.2 <0.2.2"
+    "dsh": ">=0.2.1-rc.2 <0.2.2 || >=0.2.2-0 <0.2.3"
   },
   "exports": {
     ".": "./index.js",

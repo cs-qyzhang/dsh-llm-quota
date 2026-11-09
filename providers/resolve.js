@@ -20,6 +20,13 @@ import * as xai from './xai.js'
 import * as xiaomiMimo from './xiaomi-mimo.js'
 
 const ACCOUNT_PROVIDER = 'deepseek-account'
+
+// cordis 4.1 起校验后配置（带 .get() refs）挂在 fiber.effectiveConfig，
+// fiber.config 变为原始输入；cordis 4.0 只有 fiber.config。
+function liveConfig(entry) {
+  return entry.fiber.effectiveConfig ?? entry.fiber.config
+}
+
 const PI_AI_PACKAGE = '@deepseek-ai/dsh-llm-pi-ai'
 const DEEPSEEK_API_KEY_PACKAGE = '@deepseek-ai/dsh-llm-deepseek-api-key'
 const DEEPSEEK_OFFICIAL_PROVIDER = 'deepseek-official'
@@ -54,7 +61,7 @@ export function resolveRoute(ctx, provider, overrides) {
   if (!owner) return { provider, reason: 'unavailable' }
 
   if (owner.options.name === PI_AI_PACKAGE && directory.settingsPath[0] === 'providers') {
-    const profile = owner.fiber.config.providers.get()?.[provider]
+    const profile = liveConfig(owner).providers.get()?.[provider]
     if (!profile || typeof profile !== 'object') return { provider, reason: 'unavailable' }
     const baseURL = profile.baseURL ?? directory.defaultBaseURL
     if (isXiaomiMimoHost(baseURL)) {
@@ -140,8 +147,9 @@ export function resolveRoute(ctx, provider, overrides) {
   }
 
   if (owner.options.name === DEEPSEEK_API_KEY_PACKAGE && provider === DEEPSEEK_OFFICIAL_PROVIDER) {
-    const keyName = owner.fiber.config.apiKeyEnv.get()
-    const baseURL = owner.fiber.config.baseURL.get()
+    const config = liveConfig(owner)
+    const keyName = config.apiKeyEnv.get()
+    const baseURL = config.baseURL.get()
       ?? ctx.get('launchEnvironment')?.get('DEEPSEEK_BASE_URL')?.value
       ?? DEEPSEEK_PUBLIC_BASE_URL
     return routeFromBaseURL(provider, baseURL, keyName ? [keyName] : [])

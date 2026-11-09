@@ -64,12 +64,14 @@ function createHarness(options = {}) {
     defaultBaseURL: source.defaultBaseURL,
     nativeAuth: { env: source.nativeEnv ?? [], oauth: source.oauth ?? false },
   }))
+  // cordis 4.1 的校验配置在 fiber.effectiveConfig（fiber.config 是原始输入），
+  // cordis 4.0 只有 fiber.config；cordis41 选项模拟新版形状。
+  const fiber = (config) => (options.cordis41
+    ? { state: 2, config: undefined, effectiveConfig: config }
+    : { state: 2, config })
   const entries = [{
     options: { id: 'llm-pi-ai', name: '@deepseek-ai/dsh-llm-pi-ai' },
-    fiber: {
-      state: 2,
-      config: { providers: { get: () => state.providers } },
-    },
+    fiber: fiber({ providers: { get: () => state.providers } }),
   }]
 
   if (options.deepseek) {
@@ -82,13 +84,10 @@ function createHarness(options = {}) {
     })
     entries.push({
       options: { id: 'llm-deepseek', name: '@deepseek-ai/dsh-llm-deepseek-api-key' },
-      fiber: {
-        state: 2,
-        config: {
-          apiKeyEnv: { get: () => state.deepseek.apiKeyEnv },
-          baseURL: { get: () => state.deepseek.baseURL },
-        },
-      },
+      fiber: fiber({
+        apiKeyEnv: { get: () => state.deepseek.apiKeyEnv },
+        baseURL: { get: () => state.deepseek.baseURL },
+      }),
     })
   }
 
@@ -313,6 +312,32 @@ test('resolves deepseek-official live credentials and launch-environment baseURL
   const unsupported = await body(await host.request('deepseek-official'))
   assert.equal(unsupported.reason, 'unsupported')
   assert.equal(calls.length, 1)
+})
+
+test('resolves config from fiber.effectiveConfig on cordis 4.1 fiber shapes', async (t) => {
+  const host = createHarness({
+    cordis41: true,
+    providers: {
+      'zai-coding-cn': {
+        apiKeyEnv: 'ZAI_CODING_CN_API_KEY',
+        defaultBaseURL: 'https://open.bigmodel.cn/api/coding/paas/v4',
+      },
+    },
+    deepseek: { apiKeyEnv: 'CUSTOM_DEEPSEEK_KEY' },
+    keys: { ZAI_CODING_CN_API_KEY: 'zai-current', CUSTOM_DEEPSEEK_KEY: 'deepseek-key' },
+  })
+  const calls = mockFetch(t, async (url) => json(String(url).includes('deepseek') ? {
+    is_available: true,
+    balance_infos: [{ currency: 'CNY', total_balance: '10.00' }],
+  } : GLM_RESPONSE))
+
+  await host.request('zai-coding-cn')
+  assert.equal(calls[0].init.headers.Authorization, 'Bearer zai-current')
+
+  const balance = await body(await host.request('deepseek-official'))
+  assert.equal(balance.ok, true)
+  assert.equal(balance.amount, '10.00')
+  assert.equal(calls[1].init.headers.Authorization, 'Bearer deepseek-key')
 })
 
 test('does not call upstream for unsupported, inactive, unknown, or OAuth-only routes', async (t) => {
