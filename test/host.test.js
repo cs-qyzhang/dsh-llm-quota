@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { apply } from '../index.js'
+import { readFileSync } from 'node:fs'
+import { Config, apply } from '../index.js'
 
 const GLM_RESPONSE = {
   code: 200,
@@ -91,12 +92,16 @@ function createHarness(options = {}) {
     })
   }
 
-  let registered
+  const registered = new Map()
+  const disposers = []
+  const listeners = new Map()
+  state.restarts = 0
+  state.settingsPresentation = undefined
   const ctx = {
     connection: {
       fetch: {
         register(route) {
-          registered = route
+          registered.set(route.path, route)
           return async () => {}
         },
       },
@@ -118,7 +123,32 @@ function createHarness(options = {}) {
       listConfigurableProviders: () => directories,
     },
     loader: { entries: () => entries.values() },
-    effect(fn) { return fn() },
+    fiber: {
+      async restart() {
+        state.restarts += 1
+      },
+    },
+    inject(names, callback) {
+      if (!names.includes('settings')) return callback(ctx)
+      return callback({
+        ...ctx,
+        settings: {
+          configure(presentation) {
+            state.settingsPresentation = presentation
+            return () => {}
+          },
+        },
+      })
+    },
+    on(name, callback) {
+      listeners.set(name, callback)
+      return () => listeners.delete(name)
+    },
+    effect(fn) {
+      const dispose = fn()
+      if (typeof dispose === 'function') disposers.push(dispose)
+      return dispose
+    },
     get(name) {
       if (name === 'deepseekAccount') return state.account
       if (name === 'launchEnvironment') {
@@ -128,15 +158,30 @@ function createHarness(options = {}) {
     },
   }
 
-  apply(ctx, options.config)
-  assert.ok(registered, 'quota route should be registered')
+  apply(ctx, { history: false, ...options.config })
+  const route = registered.get('/api/llm-quota')
+  assert.ok(route, 'quota route should be registered')
 
   return {
     state,
-    route: registered,
+    route,
+    routes: registered,
     async request(provider, init) {
       const query = provider === undefined ? '' : `?provider=${encodeURIComponent(provider)}`
-      return registered.fetch(new Request(`http://127.0.0.1/api/llm-quota${query}`, init))
+      return route.fetch(new Request(`http://127.0.0.1/api/llm-quota${query}`, init))
+    },
+    async requestHistory(provider, days = '7') {
+      const history = registered.get('/api/llm-quota/history')
+      assert.ok(history, 'history route should be registered')
+      const query = provider === undefined ? '' : `?provider=${encodeURIComponent(provider)}`
+      return history.fetch(new Request(`http://127.0.0.1/api/llm-quota/history${query}&days=${days}`))
+    },
+    async volatileUpdate() {
+      await listeners.get('loader/volatile-update')?.()
+    },
+    dispose() {
+      for (const dispose of disposers.splice(0).reverse()) dispose()
+      listeners.clear()
     },
   }
 }
@@ -176,6 +221,53 @@ function deferred() {
   return { promise, resolve, reject }
 }
 
+test('declares live config defaults and preserves arbitrary provider fields', () => {
+  const providers = {
+    custom: {
+      kind: 'custom-kind',
+      mode: 'plan',
+      endpoint: 'https://quota.example.test/v1',
+      keyNames: ['CUSTOM_KEY'],
+      futureField: { nested: true },
+    },
+  }
+  const config = Config({ providers })
+  assert.equal(config.cacheSeconds.get(), 30)
+  assert.equal(config.history.get(), true)
+  assert.equal(config.historyIntervalSeconds.get(), 30)
+  assert.equal(config.historyDefaultRange.get(), '1h')
+  assert.deepEqual(config.providers.get(), providers)
+  for (const range of ['1h', '4h', '12h', '1d', '7d', '30d']) {
+    assert.equal(Config({ historyDefaultRange: range }).historyDefaultRange.get(), range)
+  }
+  assert.throws(() => Config({ historyDefaultRange: '24h' }))
+  assert.throws(() => Config({ historyDefaultRange: 4 }))
+})
+
+test('reads volatile config refs and restarts after a settings update', async (t) => {
+  const host = createHarness({
+    config: {
+      cacheSeconds: { get: () => 0 },
+      historyDefaultRange: { get: () => '30d' },
+      providers: {
+        get: () => ({
+          custom: { kind: 'kimi', endpoint: 'https://quota.example.test/v1', keyNames: ['CUSTOM_KEY'] },
+        }),
+      },
+    },
+    keys: { CUSTOM_KEY: 'custom-key' },
+  })
+  t.after(host.dispose)
+  const calls = mockFetch(t, async () => json(KIMI_RESPONSE))
+
+  await host.request('custom')
+  await host.request('custom')
+  assert.equal(calls.length, 2, 'zero cacheSeconds from a volatile ref should disable caching')
+  assert.deepEqual(host.state.settingsPresentation, { auto: false })
+  await host.volatileUpdate()
+  assert.equal(host.state.restarts, 1)
+})
+
 test('registers an authenticated API fetch route and returns no-store JSON', async (t) => {
   const host = createHarness({
     providers: {
@@ -196,6 +288,23 @@ test('registers an authenticated API fetch route and returns no-store JSON', asy
   assert.equal(data.fiveHour.remainingPercent, 75)
   assert.equal(calls[0].url, 'https://api.kimi.com/coding/v1/usages')
   assert.equal(calls[0].init.headers.Authorization, 'Bearer test-key')
+})
+
+test('serves the locale message dictionaries from locale/*.json', async (t) => {
+  const host = createHarness()
+  t.after(host.dispose)
+  const route = host.routes.get('/api/llm-quota/i18n')
+  assert.ok(route, 'i18n route should be registered')
+  assert.deepEqual(route.methods, ['GET'])
+  const response = await route.fetch(new Request('http://127.0.0.1/api/llm-quota/i18n'))
+  const data = await body(response)
+  assert.equal(data.ok, true)
+  assert.deepEqual(Object.keys(data.dictionaries).sort(), ['de', 'en', 'es', 'fr', 'ja', 'pt', 'ru', 'zh'])
+  for (const [language, messages] of Object.entries(data.dictionaries)) {
+    const file = JSON.parse(readFileSync(new URL(`../locale/${language}.json`, import.meta.url), 'utf8'))
+    assert.deepEqual(messages, file.messages, `${language} messages should match the locale file`)
+    assert.ok(Object.keys(messages).length > 0, `${language} messages should not be empty`)
+  }
 })
 
 test('uses the DSH default endpoints for Z.AI and zai-coding-cn', async (t) => {

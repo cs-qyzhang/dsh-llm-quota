@@ -1,1 +1,27 @@
+# Dependencies
+node_modules/
+
+# Environment variables
+.env
+.env.*
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+
+# Agent / IDE tooling
 .trae/
+.agents/
+.vscode/
+.idea/
+
+# Generated screenshots
+.screenshots/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test coverage
+coverage/

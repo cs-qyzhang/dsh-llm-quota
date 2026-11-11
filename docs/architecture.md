@@ -65,15 +65,17 @@ dsh Host
 | --- | --- |
 | `package.json` | bundle 清单；`dsh.bundle.patch` 指向补丁；`dsh.client` 声明 Web 客户端、激活顺序和依赖 |
 | `cordis.patch.yml` | 插入 `id: llm-quota` 的 Host 插件行 |
-| `index.js` | Host 插件入口：注册 Connection 认证路由、缓存 / 单飞、错误归一化；供应商细节委托给 `providers/` |
+| `index.js` | Host 插件入口：注册额度 / 历史 / i18n Connection 认证路由、共享缓存 / 单飞、后台采集生命周期、错误归一化；供应商细节委托给 `providers/` |
+| `history.js` | 历史指标提取、变化去重、30 天 / 20,000 点清理、SQLite WAL 持久化，以及全 provider 单轮采集与定时器控制 |
 | `providers/index.js` | 适配器注册表：已知主机 → 额度端点映射、按 `kind` 分发 `readQuota` |
 | `providers/resolve.js` | 读取 DSH 实时 provider 配置，把 provider id 解析成额度路由（含 `config.providers` 覆盖与 MiMo 计费类型） |
 | `providers/shared.js` | 适配器共享工具：凭证读取、上游 HTTP、缓存指纹、统一响应片段 |
 | `providers/*.js` | 单个额度体系适配器（`account`、`deepseek`、`glm`、`kimi`、`minimax`、`moonshot`、`openrouter`、`qwen`、`vercel-gateway`、`xiaomi-mimo`） |
-| `client.js` | Client 插件：注册 locale 字典、向 composer dock 注册条目、模型选择标签 / 分组标题的额度装饰、轮询、渲染浮层；并向 `plugins.bundle.config` 注册供应商额外凭证配置页 |
-| `locale/*.json` | 插件管理页使用的标题 / 描述元数据 |
+| `client.js` | Client 插件：拉取并注册 locale 字典、向 composer dock 注册条目、模型选择标签 / 分组标题的额度装饰、轮询、渲染浮层；并向 `plugins.bundle.config` 注册供应商额外凭证配置页 |
+| `locale/*.json` | 文案唯一来源：`meta`（插件管理页标题 / 描述）与 `messages`（界面文案字典），供 Host i18n 路由读取 |
 | `icon.svg` | 插件图标 |
 | `test/host.test.js` | Host 回归测试（mock 上游，不访问真实供应商） |
+| `test/locale.test.js` | 文案回归测试（键 / 占位符对齐、无死键、代码无中文文案） |
 
 ## 渲染位置
 
@@ -125,6 +127,21 @@ provider id 到额度路由的完整规则见 [providers.md](providers.md#自动
 - 成功缓存最多 50 条，读取和写入都会刷新 LRU 顺序。
 - 修改 `apiKeyEnv`、`baseURL` 或凭证引用名会改变指纹，因此不会命中修改前的缓存。
 - 缓存头为 `Cache-Control: no-store`，浏览器与中间层不缓存额度响应。
+
+### 历史采集与持久化
+
+`history` 配置默认为 `true`。Host 激活后立即执行一轮采集，之后默认每 30 秒触发一轮，可通过 `historyIntervalSeconds` 按秒调整（最小 1 秒），不依赖浏览器页面或会话是否打开；设为 `history: false` 时不注册历史路由、不启动定时器，也不写历史。
+
+- 每轮动态合并激活 provider、`config.providers` 和可用的 `deepseek-account`，经 `resolveRoute()` 过滤 unsupported / unavailable 路由。
+- 单轮最多 3 个 provider 并发，失败相互隔离；上一轮未完成时下一轮不重入。后台读取绕过 TTL，但与普通请求共享 pending 单飞和成功缓存。
+- 只有新鲜且 `ok: true` 的结果进入历史。缓存命中、stale、未登录、缺失凭证和网络错误均不写点。
+- 历史以 `route.cacheKey` 分区。首点总是保存，后续仅当 `kind / mode / currency / metrics` 变化时追加；`updatedAt`、`stale` 和 `resetAt` 不参与签名，避免相对重置时间产生伪变化。
+- 指标包括 `amount / usedAmount / cycleUsage`、标准窗口的 `remainingPercent`，以及 MiMo 的 `plan.month / plan.compensation`。金额保存原始字符串，绘图时才转数值。
+- 默认文件为 `$DSH_HOME/data/llm-quota-history.sqlite`，未设置 `DSH_HOME` 时使用 `~/.dsh/data/llm-quota-history.sqlite`。使用 Node `>=22.13.0` 内置 `node:sqlite` 和 WAL，无需第三方依赖。
+- `history_points` 按 `(provider_key, recorded_at, id)` 建索引，每个变化点在事务中增量 `INSERT`，不再复写全量历史；同一事务删除过期点并裁剪当前配置指纹的点数。区间查询分别读取最后一个基线点和后续变化点，存储异常不影响额度查询。
+- 每次写入清理 30 天前的数据，并将每个配置指纹限制为 20,000 点。重载后最后一点仍参与去重。
+
+历史路由为 `GET /api/llm-quota/history?provider=<id>&days=1|7|30`，也支持用 `hours=1|4|12` 替换 `days`；未提供范围参数时使用 `historyDefaultRange`（默认 `1h`），两个范围参数不能同时提供。它只解析当前 route 并读取本地文件，不访问上游，返回 `{ ok, provider, since, points, sampled, historyDefaultRange }`；结果额外包含区间前最后一个点作为基线。为限制传输与 SVG 渲染成本，Host 在查询后把响应抽样到最多 100 点，保留首末点和各指标极值，抽样时 `sampled: true`；这只影响响应，不删除 SQLite 原始点。认证、Host/Origin 检查和 `no-store` 行为与额度路由一致。
 
 ### 超时与降级
 
@@ -353,6 +370,15 @@ const provider = selection?.next?.provider ?? selection?.lastUsed?.provider ?? '
 - 样式只使用 `--dsw-alias-*`、`--dsw-specific-*` 和 `--dsh-*` 主题变量，不写死颜色。
 - 条目本身是 `button`，带 `aria-haspopup="dialog"` 与 `aria-expanded`。
 
+浮层中的历史区块由独立 `QuotaHistory` 组件负责，仅打开时请求历史路由，并每 20 秒重读本地历史；关闭、切换 provider 或卸载会 abort。额度条目本身仍按 60 秒刷新，不新增 UI 侧上游采样。
+
+- 支持近 1、4、12、24 小时、7 天、30 天和多指标切换，默认优先总余额，其次已用金额、5 小时或套餐额度。
+- 初始范围由 `historyDefaultRange` 决定，默认近 1 小时。新挂载时通过无范围历史请求读取生效配置；若用户尚未手动选择且配置不是 1 小时，再按配置范围查询。配置只决定初始范围，20 秒刷新不覆盖手动选择；保存后重新打开浮层或切换 provider 时使用新默认值。
+- SVG 通过非被动 wheel 监听逐级缩放：向上滚动缩短窗口、向下滚动放大窗口，220ms 节流，在 1 小时和 30 天边界停止，并阻止图表滚轮事件带动页面或浮层滚动。
+- 图表使用内联 SVG 阶梯线：区间前基线延伸到区间起点，最后一个实际值延伸到当前时间，展示用末点不会写回存储。
+- 百分比纵轴固定 0–100，金额轴按极值留白；摘要显示区间首值、最新值和变化量，数据点 `<title>` 提供精确时间与原始金额。
+- 加载、空历史、无指标和失败均有本地化状态，图表只使用 DSH 主题 token，不增加第三方图表依赖。
+
 ### 模型菜单与当前模型标签
 
 模型选择菜单的分组标题和输入区的当前模型标签由 ui-model-selection 渲染，它们不属于 composer dock，也没有可用的 list slot。`conversation.input.model.label` 虽然是官方的模型名替换入口，但它是 `single` slot，已被内置 `ui-deepseek-model-label-1017`（模型行里的 `1017` 徽标）以优先级 0 占用；同优先级注册会抛错，用 `priority: -1` 抢占会覆盖掉该徽标。
@@ -378,21 +404,43 @@ const provider = selection?.next?.provider ?? selection?.lastUsed?.provider ?? '
 
 ### 本地化
 
-`client.js` 内置 `zh` / `en` 两份字典，通过 `ctx.locale.register(NS, DICT)` 注册；slot 注册时传 `locale: NS`，框架会注入绑定后的 `t`。`locale/*.json` 只负责插件管理页的标题和描述。
+文案的唯一来源是 `locale/*.json`。除中文、英文外，还覆盖 dsh 支持的全部语言：`ja`、`es`、`fr`、`de`、`ru`、`pt`（与 `@deepseek-ai/dsh-client-locale` 的语言 id 一致）。每个文件包含两节：`meta` 提供插件管理页的标题与描述，`messages` 是界面文案字典（`{key}` 占位符模板）。
+
+- Host 在 `GET /api/llm-quota/i18n` 路由上按语言返回 `messages`；读取时按文件名识别语言 id，只接受 `messages` 为对象的文件。
+- Client 启动时拉取字典并调用 `ctx.locale.register(NS, dictionaries)` 注册；注册可晚于界面挂载，locale service 会推进 revision，slot 文案无需重挂载即可更新。拉取失败按 30 秒间隔重试，直到字典落地。
+- slot 注册时传 `locale: NS`，框架注入绑定后的 `t`；字典未到达前由 `fallbackTranslate` 兜底（以 `en` 为准做占位符替换）。
+
+新增文案需要同步全部 locale 文件。`test/locale.test.js` 固化了以下约定：dsh 支持的每种语言都有字典、各语言键集合与 `en` 一致、每键占位符一致、无死键、`tr()` 调用与动态键（错误键、通知键、范围标签等）都能解析到字典键，且 `client.js` 中不残留中文文案。
 
 ### 配置页面
 
-`client.js` 还向 Plugins 页的 `plugins.bundle.config` keyed slot 注册配置页，key 为包名 `@cs-qyzhang/dsh-llm-quota`。页面出现在该 bundle 详情页的描述与行列表之间，用于补充供应商需要的控制台凭证：
+`client.js` 向 Plugins 页的 `plugins.bundle.config` keyed slot 注册配置页，key 为包名 `@cs-qyzhang/dsh-llm-quota`。页面出现在该 bundle 详情页的描述与行列表之间，分为「运行配置」和「供应商额外凭证」两区。
+
+运行配置完整覆盖 Host 的五个配置项：
+
+| 配置项 | 默认值 | UI 与约束 |
+| --- | --- | --- |
+| `cacheSeconds` | `30` | 成功缓存秒数，允许 0；留空恢复继承值 |
+| `history` | `true` | 历史采集开关；关闭后禁用间隔输入但保留草稿 |
+| `historyDefaultRange` | `1h` | 历史浮层初始范围下拉框；可选 `1h`、`4h`、`12h`、`1d`、`7d`、`30d`，保存后重新打开浮层生效 |
+| `historyIntervalSeconds` | `30` | 采集间隔秒数，最小 1；留空恢复继承值 |
+| `providers` | `{}` | JSON 编辑器；根及每个 provider 值必须是对象，所有适配器字段原样保存 |
+
+- Host 导出对应的 volatile Schemastery `Config`，并调用 `settings.configure({ auto: false })` 关闭重复的系统表单。`apply` 同时兼容 volatile `.get()` ref 与普通配置值。
+- 页面通过 `remote.settings.describe()` 读取 `llm-quota` 命名空间及 `revision`，通过 `remote.settings.mutate()` 仅提交变化的顶层路径；并发冲突会重新读取而不覆盖新值，配置层只读时禁用保存。
+- 保存触发 `loader/volatile-update` 后重启当前 fiber，既有 effect 会注销旧路由、停止采集器并关闭 SQLite，再以新配置重建缓存和后台任务。
+- 页面通过可选的 `ctx.inject(['slots', 'remote', 'remote.credentials', 'remote.settings'], ...)` 注册；缺少所需 Remote 或 Plugins 页时页面不出现，composer dock 的额度条目不受影响。
+
+供应商额外凭证字段包括：
 
 | 字段 | 凭据引用 |
 | --- | --- |
 | Xiaomi MiMo 控制台 Cookie | `MIMO_COOKIE` / `XIAOMI_MIMO_COOKIE` |
 | Qwen 控制台 Access Token | `QWEN_CONSOLE_TOKEN` / `BAILIAN_CONSOLE_TOKEN` |
 
-- 页面通过可选的 `ctx.inject(['slots', 'remote', 'remote.credentials'], ...)` 注册；缺少 credentials Remote 或 Plugins 页时页面不出现，composer dock 的额度条目不受影响。
 - 状态读取使用 `remote.credentials.describe(refs)`，只返回 `configured` / `source` / `writable`；保存与清除分别调用 `remote.credentials.set(ref, value)` 和 `remote.credentials.unset(ref)`，明文不会回传浏览器。
 - 主引用未配置但兼容别名已配置时，页面显示「已配置（别名）」；由环境变量或更高配置层提供的凭据 `writable: false`，页面显示只读。
-- 保存后 Host 的 30 秒成功缓存不会被主动清除，因此下一次额度刷新（客户端最长 60 秒）才会读到新凭证。
+- 单独保存凭证后 Host 的 30 秒成功缓存不会被主动清除，因此下一次额度刷新（客户端最长 60 秒）才会读到新凭证。
 
 ## 本地开发与验证
 
@@ -417,8 +465,9 @@ curl -i 'http://127.0.0.1:3090/api/llm-quota?provider=zai-coding-cn'
 2. 状态行应出现额度条目，且不影响原有条目。
 3. 点击条目应弹出浮层，`Escape` 可关闭。
 4. 切换模型后条目内容应随 provider 变化。
-5. Plugins → Installed plugins → 模型额度 的详情页应出现「供应商额外凭证」，保存 / 清除后状态应即时变化。
-6. 控制台不应出现 `slot entry crashed in 'conversation.composer.dock'`。
+5. Plugins → Installed plugins → 模型额度 的详情页应出现「运行配置」与「供应商额外凭证」。五项配置应显示当前值，非法数值 / JSON / 时间范围不得发起写入；保存后刷新页面仍保持，并立即重建 Host 路由与采集器。默认历史范围为近 1 小时；改为近 30 天保存后，重新打开浮层应默认选中该范围，手动选择不受 20 秒刷新影响。
+6. 供应商凭证保存 / 清除后状态应即时变化，别名与只读状态保持原有行为。
+7. 控制台不应出现 `slot entry crashed in 'conversation.composer.dock'`。
 
 ### 改动后的加载行为
 

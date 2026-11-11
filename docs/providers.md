@@ -593,7 +593,22 @@ refs:
 
 **3. 不需要给 llm-quota 增加配置**
 
-只要推理 `baseURL` 的主机属于 `*.xiaomimimo.com`，插件会自动走控制台 Cookie 适配器并推断计费类型。只有想换 Cookie 凭据名、走代理或自定义 provider 名时才需要显式覆盖：
+只要推理 `baseURL` 的主机属于 `*.xiaomimimo.com`，插件会自动走控制台 Cookie 适配器并推断计费类型。只有想换 Cookie 凭据名、走代理或自定义 provider 名时才需要显式覆盖。
+
+推荐在 **Plugins → Installed plugins → 模型额度 → 运行配置 → 自定义 Providers（JSON）** 中编辑，保存后立即生效。UI 中填写 `providers` 映射本身，不需要再包一层 `providers` 键，例如：
+
+```json
+{
+  "xiaomi": {
+    "kind": "xiaomi-mimo",
+    "mode": "balance",
+    "endpoint": "https://platform.xiaomimimo.com/api/v1",
+    "keyNames": ["MY_MIMO_COOKIE"]
+  }
+}
+```
+
+手工 YAML 配置仍可使用：
 
 ```yaml
 - id: llm-quota
@@ -616,7 +631,7 @@ refs:
 
 **4. 生效与验证**
 
-重启 dsh 或刷新页面，在已有会话中查看输入框下方的状态行；未配置 Cookie 时会显示「未配置 MiMo 控制台 Cookie」。
+UI 保存后立即生效；手工修改 YAML 后重启 dsh 或刷新页面。在已有会话中查看输入框下方的状态行；未配置 Cookie 时会显示「未配置 MiMo 控制台 Cookie」。
 
 适配器按 provider 类型并行请求对应控制台接口（均需 Cookie）：
 

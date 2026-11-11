@@ -1,250 +1,105 @@
 # dsh-llm-quota
 
-[![npm](https://img.shields.io/npm/v/@cs-qyzhang/dsh-llm-quota?label=npm)](https://www.npmjs.com/package/@cs-qyzhang/dsh-llm-quota)
+[![npm](https://img.shields.io/npm/v/@cs-qyzhang/dsh-llm-quota?label=npm&color=blue)](https://www.npmjs.com/package/@cs-qyzhang/dsh-llm-quota)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![dsh](https://img.shields.io/badge/dsh-0.2.2--rc.1-blue)](https://github.com/deepseek-ai/deepseek-harness)
+[![dsh](https://img.shields.io/npm/v/@deepseek-ai/dsh?label=dsh&color=blue)](https://www.npmjs.com/package/@deepseek-ai/dsh)
 
-在 DeepSeek Harness（dsh）的状态行与模型选择器中，实时显示当前模型供应商的剩余余额或 Coding Plan 额度——不用切回控制台，写代码时随时掌握额度还剩多少。
+在 DeepSeek Harness（dsh）的状态行与模型选择器中显示当前模型供应商的剩余余额或 Coding Plan 额度，并通过历史趋势图掌握额度变化。
 
-## 特性
+Displays the current model provider's remaining balance or Coding Plan quota in the DeepSeek Harness (dsh) status line and model selector, with historical trend charts for tracking changes over time.
 
-- **状态行实时展示**：余额型显示剩余金额，套餐型显示 5 小时 / 周额度百分比与重置时间
-- **多供应商支持**：覆盖 DeepSeek、GLM、Kimi、MiniMax、Moonshot、OpenRouter、Anthropic、OpenAI、GitHub Copilot、Cloudflare、Vercel、Qwen、Xiaomi MiMo 等主流服务
-- **详情浮层**：点击状态行条目即可展开充值余额、套餐等级、重置时间等明细
-- **凭证安全**：控制台凭证通过 Host 的凭据库存储，浏览器只能读到「已配置 / 未配置」，接触不到明文
-- **可扩展**：支持自定义 provider 路由与适配器配置，便于接入代理或私有部署
+## 功能 / Features
 
-## 界面预览
+- **实时额度**：显示余额、本月已用，或 5 小时 / 周额度的剩余百分比与重置时间。
+- **多处展示**：覆盖状态行、模型菜单和「当前模型」标签，点击状态行可查看详情。
+- **历史趋势**：后台定时采集，在详情浮层展示额度变化，无需保持会话页面打开。
+- **多供应商**：支持 DeepSeek、GLM、Kimi、MiniMax、OpenAI、OpenRouter 等主流服务。
+- **可扩展**：支持自定义 provider 路由和适配器配置，可接入代理或私有部署。
 
-状态行、模型菜单与「当前模型」标签中的额度：
+- **Real-time quotas**: Displays remaining balance, current month's usage, or the remaining percentage and reset time for 5-hour / weekly quotas.
+- **Multiple locations**: Available in the status line, model menu, and “Current Model” label. Click the status line entry to view details.
+- **Historical trends**: Collects data periodically in the background and displays changes in the detail popup, without keeping the session page open.
+- **Multiple providers**: Supports DeepSeek, GLM, Kimi, MiniMax, OpenAI, OpenRouter, and other popular services.
+- **Extensible**: Supports custom provider routes and adapter configurations for proxies or private deployments.
 
-![状态行、模型菜单与当前模型标签中的额度](docs/ui.png)
+## 界面预览 / Preview
 
-点击状态行条目展开的详情浮层：
+![状态行、模型菜单与当前模型标签中的额度 / Quota in the status line, model menu, and Current Model label](docs/ui.png)
 
-![点击状态行条目展开的额度详情浮层](docs/popup.png)
+![额度详情与历史趋势浮层 / Quota details and historical trend popup](docs/popup.png)
 
-## 安装/更新
+## 安装与更新 / Installation and Updates
 
-插件已发布至 npm：[`@cs-qyzhang/dsh-llm-quota`](https://www.npmjs.com/package/@cs-qyzhang/dsh-llm-quota)，推荐通过 `dsh plugin` 从 npmjs 安装。
+要求 Node.js `>=22.13.0`。
 
-### 命令行安装
+Requires Node.js `>=22.13.0`.
 
 ```bash
 dsh plugin --profile web add @cs-qyzhang/dsh-llm-quota@latest
 ```
 
-### 通过 Plugins 页
+也可以在 dsh 的 **插件 → 添加插件** 中填写 `@cs-qyzhang/dsh-llm-quota`，安装并启用。
 
-1. 打开 dsh 页面上方的 **插件** -> **添加插件**。
-2. 填写 `@cs-qyzhang/dsh-llm-quota`，点击安装并启用。
+Alternatively, enter `@cs-qyzhang/dsh-llm-quota` under **Plugins → Add Plugin** in dsh, then install and enable it.
 
-### 卸载
+卸载：
+
+To uninstall:
 
 ```bash
 dsh plugin --profile web remove @cs-qyzhang/dsh-llm-quota
 ```
 
-移除后重启 dsh 或刷新页面即可，`dsh plugin` 会同时清理 `dsh.profile.bundles` 中的对应条目。
+卸载后重启 dsh 或刷新页面。
 
-## 支持的供应商
+Restart dsh or refresh the page after uninstalling.
 
-| 供应商 | provider id 示例 | 状态行 | 点击展开 |
-| --- | --- | --- | --- |
-| DeepSeek 账号 | `deepseek-account` | `余额 ¥65.28` | 充值余额、赠送余额、更新时间 |
-| DeepSeek API Key | `deepseek-official` | `余额 ¥65.28` | 充值余额、赠送余额、可用状态 |
-| Anthropic | `anthropic` | `本月已用 $12.34` | 本月已用、输入 / 输出 Tokens、更新时间 |
-| Baseten | `baseten` | `本月已用 $12.34` | 本月已用、已用抵扣、实付小计、更新时间 |
-| Cloudflare Workers AI / AI Gateway | `cloudflare-workers-ai`、`cloudflare-ai-gateway` | `余额 $95.50`，无余额时 `本月已用 $12.34` | 剩余额度、本期已用、更新时间 |
-| Fireworks AI | `fireworks` | `本月已用 $12.34` | 本月已用、更新时间 |
-| GitHub Copilot | `github-copilot` | `套餐剩 80%` | 套餐等级、Premium 请求、Chat 额度、重置时间 |
-| GLM Coding Plan（Z.AI / 智谱） | `zai`、`zai-coding-cn` | `5h 剩 100% · 周 剩 33%` | 套餐等级、5 小时与周额度、重置时间 |
-| Hugging Face | `huggingface` | `本月已用 $12.34`，无金额时 `本月已用 123 次` | 本月已用、请求数、输入 / 输出 Tokens、更新时间 |
-| Kimi For Coding | `kimi-coding` | `5h 剩 0% · 周 剩 33%` | 5 小时与周额度、重置时间 |
-| MiniMax Coding Plan / M Plan | `minimax`、`minimax-cn` | `5h 剩 83% · 周 剩 80%` | 模型名、5 小时与周额度、重置时间 |
-| Moonshot 开放平台 | `moonshotai`、`moonshotai-cn` | `余额 ¥49.59` | 现金余额、代金券余额、更新时间 |
-| OpenAI | `openai` | `本月已用 $12.34` | 本月已用、请求数、输入 / 输出 Tokens、更新时间 |
-| OpenAI Codex（ChatGPT 订阅） | `openai-codex` | `5h 剩 80% · 周 剩 60%` | 5 小时与周额度、重置时间 |
-| OpenCode Go | `opencode-go` | `5h 剩 80% · 周 剩 60%` | 5 小时 / 周 / 月额度、重置时间 |
-| OpenRouter | `openrouter` | `余额 $15.50` | 已购买额度、已使用、更新时间 |
-| Radius | `radius` | `余额 $45.00` | 本期已用、更新时间 |
-| Together AI | `together` | `本月已用 $12.34` | 本月已用、更新时间 |
-| Vercel AI Gateway | 指向 `ai-gateway.vercel.sh` 的路由，如 `vercel` | `余额 $95.50` | 剩余额度、已使用、更新时间 |
-| xAI（Grok） | `xai` | `余额 $45.00` | 预付余额、本期已用、更新时间 |
-| 阿里云百炼 Qwen Token Plan | `qwen-token-plan`、`qwen-token-plan-cn`、`qwen-token-plan-individual` | `套餐剩 50%` | 月度额度、重置时间 |
-| Xiaomi MiMo（按量计费） | `xiaomi` | `余额 ¥65.27` | 现金/赠送/冻结余额、更新时间 |
-| Xiaomi MiMo（Token Plan） | `xiaomi-token-plan-*` | `套餐剩 75%` | 套餐窗口、本月用量、重置时间 |
-| 其它供应商 | — | 不显示 | — |
+## 使用与配置 / Usage and Configuration
 
-## 配置
+插件会根据当前模型的 provider 自动查询额度。完整的 provider ID、支持范围和凭证要求见[供应商文档](docs/providers.md#支持的额度体系)与 [DSH provider 清单](docs/dsh-providers.md)。
 
-### 控制台凭证
+The plugin automatically queries quota based on the current model's provider. For complete provider IDs, supported scope, and credential requirements, see the [provider documentation](docs/providers.md#支持的额度体系) and [DSH provider list](docs/dsh-providers.md).
 
-部分供应商的推理 Key 无查询额度权限，需要额外的控制台凭证。推荐在 **Plugins → Installed plugins → 模型额度** 的「供应商额外凭证」中填写：
+- **凭证**：默认复用 dsh 中已有的推理凭证。需要额外控制台凭证的供应商，可在 **Plugins → Installed plugins → 模型额度 → 供应商额外凭证** 中配置；各供应商的具体要求见[供应商文档](docs/providers.md)。
+- **高级配置**：在 **Plugins → Installed plugins → 模型额度** 的「运行配置」中可调整 `cacheSeconds`、`history`、`historyDefaultRange`、`historyIntervalSeconds`，并用 JSON 编辑 `providers`；保存后立即生效。`historyDefaultRange` 控制历史浮层的初始范围，默认近 1 小时，可选近 1 / 4 / 12 / 24 小时、7 天或 30 天；保存后重新打开浮层生效。自定义路由字段与手工 YAML 示例见[自定义 provider](docs/providers.md#自定义或增加-provider)。
+- **历史数据**：默认每 30 秒采集一次，仅在额度变化时写入本地 SQLite。存储路径、保留策略、抽样和趋势图说明见[架构文档](docs/architecture.md#历史采集与持久化)。
 
-| 字段 | 凭据引用 | 用途 |
-| --- | --- | --- |
-| Xiaomi MiMo 控制台 Cookie | `MIMO_COOKIE`（兼容 `XIAOMI_MIMO_COOKIE`） | `xiaomi` / `xiaomi-token-plan-*` 的余额与套餐额度 |
-| Qwen 控制台 Access Token | `QWEN_CONSOLE_TOKEN`（兼容 `BAILIAN_CONSOLE_TOKEN`） | `qwen-token-plan*` 的 Token Plan 额度 |
-| xAI Management Key | `XAI_MANAGEMENT_KEY`（兼容 `XAI_MANAGEMENT_API_KEY`） | `xai` 的预付余额与本期账单 |
-| Anthropic / OpenAI Admin Key | `ANTHROPIC_ADMIN_KEY` / `OPENAI_ADMIN_KEY`（兼容 `ANTHROPIC_ADMIN_API_KEY` / `OPENAI_ADMIN_API_KEY`） | `anthropic` / `openai` 的本月已用 |
-| GitHub Token | `COPILOT_GITHUB_TOKEN`（兼容 `GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_COPILOT_TOKEN`） | `github-copilot` 的 Premium 请求额度 |
-| ChatGPT OAuth Token | `OPENAI_CODEX_TOKEN`（兼容 `OPENAI_CODEX_OAUTH_TOKEN` / `CHATGPT_OAUTH_TOKEN`） | `openai-codex` 的 5 小时 / 周额度 |
-| ChatGPT Account ID | `OPENAI_CODEX_ACCOUNT_ID`（兼容 `CHATGPT_ACCOUNT_ID`） | `openai-codex` 查询所需的 `ChatGPT-Account-Id` |
-| Cloudflare API Token | `CLOUDFLARE_API_TOKEN`（兼容 `CLOUDFLARE_API_KEY`） | `cloudflare` 的余额与本月已用 |
-| Cloudflare Account ID | `CLOUDFLARE_ACCOUNT_ID` | `cloudflare` 查询所需的账户 ID |
+- **Credentials**: Reuses inference credentials already configured in dsh by default. For providers that require additional console credentials, configure them in the plugin's additional provider credentials section. See the [provider documentation](docs/providers.md) for provider-specific requirements.
+- **Advanced configuration**: Under **Plugins → Installed plugins → Model quota**, the Runtime settings section exposes `cacheSeconds`, `history`, `historyDefaultRange`, `historyIntervalSeconds`, and a JSON editor for `providers`; changes apply immediately after saving. `historyDefaultRange` sets the initial history popup range: the last 1 hour by default, with options for the last 1 / 4 / 12 / 24 hours, 7 days, or 30 days. Reopen the popup after saving to apply it. See [custom providers](docs/providers.md#自定义或增加-provider) for route fields and manual YAML examples.
+- **Historical data**: Collects data every 30 seconds by default and writes to local SQLite only when quota changes. See the [architecture documentation](docs/architecture.md#历史采集与持久化) for the storage path, retention policy, sampling, and trend charts.
 
-也可以手动写入 `$DSH_HOME/.credentials.yaml` 的 `refs` 段（注意保留已有的 `records` 与其它 refs）：
-
-```yaml
-refs:
-  XIAOMI_API_KEY: sk-...
-  MIMO_COOKIE: "serviceToken=...; userId=..."
-  QWEN_CONSOLE_TOKEN: "..."
-  XAI_MANAGEMENT_KEY: "xai-..."
-  ANTHROPIC_ADMIN_KEY: "sk-ant-admin-..."
-  OPENAI_ADMIN_KEY: "sk-admin-..."
-  COPILOT_GITHUB_TOKEN: "ghp-..."
-  OPENAI_CODEX_TOKEN: "eyJ..."
-  OPENAI_CODEX_ACCOUNT_ID: "account_..."
-  CLOUDFLARE_API_TOKEN: "..."
-  CLOUDFLARE_ACCOUNT_ID: "..."
-```
-
-**MiMo Cookie 获取方式**：登录 `platform.xiaomimimo.com`，从任意 `/api/v1/` 请求中复制完整的 `Cookie` 请求头，至少需包含 `serviceToken` 与 `userId`；Cookie 过期后重新复制即可。Qwen 控制台 token 可通过 `bl auth login --console` 获取，详见 [providers.md](docs/providers.md#阿里云百炼-qwen-token-plan)。xAI Management Key 在 console.x.ai → Settings → Management Keys 创建（只读、Team 作用域），不是推理 API Key，详见 [providers.md](docs/providers.md#xai预付余额)。Anthropic / OpenAI 的普通推理 Key 不能查询用量，需要 Console 创建的 Admin Key（`sk-ant-admin…` / `sk-admin…`，OpenAI 仅组织 Owner 可建）；GitHub Token 与 ChatGPT OAuth Token 分别用于 Copilot 与 Codex 的订阅额度（接口非公开、可能变动）；Cloudflare 需要带 AI Gateway Read / Billing Read 权限的**账户级 API Token** 加 Account ID，与推理用 Token 是两份凭证。详见 [providers.md](docs/providers.md#支持的额度体系)。
-
-Moonshot 开放平台、MiniMax、OpenRouter、Vercel AI Gateway、Baseten、Fireworks AI、Together AI、Radius、Hugging Face、OpenCode Go 直接使用推理 Key，无需额外凭证。
-
-### 高级覆盖
-
-插件行支持可选的 `config`：
-
-```yaml
-- id: llm-quota
-  name: '@cs-qyzhang/dsh-llm-quota'
-  config:
-    cacheSeconds: 30
-    providers:
-      my-glm-route:
-        kind: glm
-        endpoint: https://api.z.ai/api/monitor/usage/quota/limit
-        keyNames: [MY_GLM_API_KEY]
-      my-kimi-route:
-        kind: kimi
-        endpoint: https://api.kimi.com/coding/v1/usages
-        keyNames: [MY_KIMI_KEY]
-```
-
-| 字段 | 默认值 | 说明 |
-| --- | --- | --- |
-| `cacheSeconds` | `30` | Host 侧每个配置指纹的成功结果缓存秒数 |
-| `providers` | 自动解析 | 整体覆盖指定 provider 的适配器配置 |
-
-`providers` 的值会整体替换该 provider 的自动解析结果。`kind` 必须是已注册适配器：`account`、`anthropic`、`baseten`、`cloudflare`、`deepseek`、`fireworks`、`github-copilot`、`glm`、`huggingface`、`kimi`、`minimax`、`moonshot`、`openai`、`openai-codex`、`opencode-go`、`openrouter`、`qwen`、`radius`、`together`、`vercel-gateway`、`xai`、`xiaomi-mimo`。
-
-- 为 GLM / Kimi / MiniMax / Moonshot / OpenRouter / Vercel AI Gateway 自定义代理时，应同时填写 `endpoint` 和 `keyNames`。
-- `qwen` 的 `endpoint` 是控制台 `cli/api.json` 的完整地址。
-- `xiaomi-mimo` 的 `endpoint` 是控制台 API 基地址，`keyNames` 是 Cookie 凭据引用，`mode` 可选 `balance` 或 `plan`。
-
-完整字段与示例见 [providers.md](docs/providers.md#自定义或增加-provider)。
-
-## HTTP 接口
-
-插件通过 DSH Host 暴露 `GET /api/llm-quota?provider=<provider id>`，返回对应供应商的余额或套餐额度 JSON：
+## HTTP 接口 / HTTP API
 
 ```text
-http://127.0.0.1:3090/api/llm-quota?provider=kimi-coding
+GET /api/llm-quota?provider=<provider id>
+GET /api/llm-quota/history?provider=<provider id>&days=7
 ```
 
-```json
-{
-  "ok": true,
-  "provider": "kimi-coding",
-  "kind": "kimi",
-  "fiveHour": { "usedPercent": 100, "remainingPercent": 0, "resetAt": "2026-10-24T11:30:21.000Z" },
-  "weekly": { "usedPercent": 67, "remainingPercent": 33, "resetAt": "2026-10-30T02:30:21.000Z" },
-  "updatedAt": "2026-10-24T10:34:25.655Z"
-}
-```
+接口需要 dsh 登录认证。完整查询参数、响应示例和失败原因见[架构文档](docs/architecture.md#响应形状)。
 
-余额型供应商返回 `currency` / `amount` 等字段，套餐型返回 `fiveHour` / `weekly` 或 `plan`。请求需通过 dsh 登录认证。
+Both endpoints require dsh authentication. See the [architecture documentation](docs/architecture.md#响应形状) for complete query parameters, response examples, and failure reasons.
 
-## 故障排查
+## 故障排查与开发 / Troubleshooting and Development
 
-| 现象 | 检查 |
-| --- | --- |
-| 状态行没有额度条目 | 是否在已打开的会话中；当前 provider 是否受支持；新会话欢迎页不渲染 dock，可改看模型菜单或当前模型标签 |
-| 模型菜单 / 当前模型旁没有额度 | 当前 provider 是否受支持；刷新页面；DSH 升级后确认 `data-provider-id` / `data-menu-group` 钩子仍在 |
-| 显示「额度暂不可用」 | 请求对应 provider 的路由，查看返回的 `reason` / `error` |
-| 显示「未配置 API Key」 | 对应凭证名是否在 dsh 凭证库或启动环境中 |
-| 显示「未配置 MiMo 控制台 Cookie」 | 是否已配置 `MIMO_COOKIE`；Cookie 是否包含 `serviceToken` 与 `userId`；Cookie 是否过期 |
-| 显示「未配置 Qwen 控制台 Token」 | 是否已配置 `QWEN_CONSOLE_TOKEN`；token 是否仍有效 |
-| 显示「未配置 Admin Key」 | 是否已配置 `ANTHROPIC_ADMIN_KEY` / `OPENAI_ADMIN_KEY`；填的是 Admin Key（`sk-ant-admin…` / `sk-admin…`）而不是推理 Key |
-| 显示「未配置 GitHub Token」 | 是否已配置 `COPILOT_GITHUB_TOKEN`（或 `GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_COPILOT_TOKEN`） |
-| 显示「未配置 ChatGPT OAuth Token」 | 是否同时配置 `OPENAI_CODEX_TOKEN` 与 `OPENAI_CODEX_ACCOUNT_ID`；token 是否仍有效 |
-| 显示「未配置 Cloudflare API Token 或 Account ID」 | 是否同时配置 `CLOUDFLARE_API_TOKEN` 与 `CLOUDFLARE_ACCOUNT_ID`；token 是否有 AI Gateway Read / Billing Read 权限 |
-| 显示「请先登录 DeepSeek」 | DeepSeek 账号登录状态 |
-| `slot entry crashed in 'conversation.composer.dock'` | 打开浏览器控制台检查 Client 插件异常；改完 `client.js` 后刷新页面 |
-| 改了代码但页面没变化 | 客户端模块按文件 mtime/size 生成 revision；刷新页面，必要时重启 dsh |
+常见错误及原因见[失败原因](docs/architecture.md#失败原因)，本地启动、浏览器验证和改动后的加载行为见[本地开发与验证](docs/architecture.md#本地开发与验证)。
 
-## 开发
-
-### 本地路径安装
-
-本地开发时无需发布到 npm，直接用本地路径安装：
-
-```bash
-# 在仓库根目录执行
-dsh plugin --profile web add .
-
-# 或指定路径
-dsh plugin --profile web add /path/to/dsh-llm-quota
-```
-
-- 本地安装写入的是同一条 `llm-quota` 插件行（`name` 取自 `package.json`），卸载命令不变：`dsh plugin --profile web remove @cs-qyzhang/dsh-llm-quota`。
-- Host 侧 `index.js` 改动由 HMR / loader 重新加载，无 HMR 时重启 dsh；Client 侧 `client.js` 改动后刷新页面即可，详见 [architecture.md](docs/architecture.md#改动后的加载行为)。
-
-### 语法检查与启动
+For common errors and their causes, see [failure reasons](docs/architecture.md#失败原因). For local startup, browser verification, and reload behavior after changes, see [local development and verification](docs/architecture.md#本地开发与验证).
 
 ```bash
 # 语法检查与 Host 回归测试（不访问真实供应商）
+# Syntax checks and Host regression tests (no real provider requests)
 npm run check
 npm test
-
-# 本地启动 dsh
-dsh web
 ```
 
-### 项目结构
+## 文档 / Documentation
 
-```text
-dsh-llm-quota/
-├── package.json          # bundle 清单、dsh.client 配置、导出项
-├── cordis.patch.yml      # 向 profile 插入 llm-quota 插件行
-├── index.js              # Host：额度路由、缓存、错误归一化
-├── providers/            # 供应商兼容层
-│   ├── index.js          # 适配器注册表
-│   ├── resolve.js        # DSH 实时配置 → 额度路由
-│   ├── shared.js         # 凭证读取、上游 HTTP、响应工具
-│   └── *.js              # account / deepseek / glm / kimi / minimax /
-│                         # moonshot / openrouter / qwen / vercel-gateway / xiaomi-mimo
-├── client.js             # Client：状态行、模型标签、轮询、浮层、配置页
-├── locale/               # 插件管理页元数据（zh / en）
-├── test/                 # Host 回归测试
-├── docs/                 # 架构与供应商文档
-├── icon.svg              # 插件图标
-└── LICENSE
-```
-
-### 文档
-
-| 文档 | 内容 |
+| 文档 / Document | 内容 / Contents |
 | --- | --- |
-| [docs/architecture.md](docs/architecture.md) | Host / Client 架构、slot 渲染、缓存、浮层与调试 |
-| [docs/providers.md](docs/providers.md) | 各供应商接口、请求与响应解析、自定义 provider、接入新适配器 |
-| [docs/dsh-providers.md](docs/dsh-providers.md) | dsh 全部三方模型 Provider，插件支持与不支持的清单及原因 |
-| [docs/README.md](docs/README.md) | 文档索引 |
+| [架构与实现 / Architecture and Implementation](docs/architecture.md) | Host / Client、缓存、历史存储、HTTP 接口、故障排查与开发验证<br>Host / Client, caching, history storage, HTTP API, troubleshooting, and development verification |
+| [供应商适配 / Provider Integration](docs/providers.md) | 供应商接口、凭证、自定义 provider 与新适配器接入<br>Provider APIs, credentials, custom providers, and new adapter integration |
+| [DSH provider 清单 / DSH Provider List](docs/dsh-providers.md) | dsh 三方模型 Provider 的支持清单与限制<br>Support status and limitations for third-party model providers in dsh |
 
-## License
+## 许可证 / License
 
 [MIT](LICENSE)

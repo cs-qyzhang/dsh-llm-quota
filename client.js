@@ -8,10 +8,25 @@ window.__ModuleLoader__.load({
     const NS = 'llm-quota'
     const PACKAGE = '@cs-qyzhang/dsh-llm-quota'
     const REFRESH_MS = 60_000
+    const HISTORY_REFRESH_MS = 20_000
     const FETCH_TIMEOUT_MS = 8_000
     const RETRY_MS = 30_000
     const SCAN_DELAY_MS = 250
-    const PANEL_WIDTH = 296
+    const HISTORY_WHEEL_STEP_MS = 220
+    const PANEL_WIDTH = 360
+    const HISTORY_RANGES = [
+      { id: '1h', hours: 1, label: 'historyRange1Hour' },
+      { id: '4h', hours: 4, label: 'historyRange4Hours' },
+      { id: '12h', hours: 12, label: 'historyRange12Hours' },
+      { id: '1d', days: 1, label: 'historyRange1' },
+      { id: '7d', days: 7, label: 'historyRange7' },
+      { id: '30d', days: 30, label: 'historyRange30' },
+    ]
+    const DEFAULT_HISTORY_RANGE = '1h'
+
+    function normalizeHistoryRange(value) {
+      return HISTORY_RANGES.some((entry) => entry.id === value) ? value : DEFAULT_HISTORY_RANGE
+    }
 
     // Credential references the provider adapters resolve, primary name first.
     // The aliases keep parity with providers/qwen.js, providers/xai.js and
@@ -49,233 +64,6 @@ window.__ModuleLoader__.load({
       'github-copilot': 'missingGitHubToken',
       'openai-codex': 'missingCodexToken',
       cloudflare: 'missingCloudflareCredential',
-    }
-
-    const DICT = {
-      zh: {
-        title: '模型额度',
-        details: '模型额度详情',
-        balance: '余额 {amount}',
-        balanceTitle: 'DeepSeek 余额',
-        fiveHour: '5h 剩 {percent}%',
-        weekly: '周 剩 {percent}%',
-        fiveHourName: '5 小时额度',
-        weeklyName: '周额度',
-        remaining: '剩余 {percent}%',
-        resetsIn: '{time} 后重置',
-        resetsAt: '{time} 重置',
-        toppedUp: '充值余额',
-        bonus: '赠送余额',
-        status: '状态',
-        available: '可用',
-        insufficient: '余额不足',
-        updatedAt: '更新于 {time}',
-        stale: '数据可能已过期',
-        error: '额度暂不可用',
-        missingCredential: '未配置 API Key',
-        missingAdminKey: '未配置 Admin Key',
-        missingGitHubToken: '未配置 GitHub Token',
-        missingCodexToken: '未配置 ChatGPT OAuth Token',
-        missingCloudflareCredential: '未配置 Cloudflare API Token 或 Account ID',
-        missingCookie: '未配置 MiMo 控制台 Cookie',
-        signedOut: '请先登录 DeepSeek',
-        mimoTitle: 'Xiaomi MiMo',
-        mimoPayg: '按量计费',
-        mimoTokenPlan: 'Token Plan',
-        mimoPlanLeft: '套餐剩 {percent}%',
-        mimoBalance: '剩余余额',
-        mimoCash: '现金余额',
-        mimoGift: '赠送余额',
-        mimoFrozen: '冻结金额',
-        mimoPlan: 'Token Plan',
-        mimoMonth: '本月用量',
-        mimoCompensation: '补偿积分',
-        mimoUsed: '已用 {used} / {limit}（{percent}%）',
-        moonshotTitle: 'Moonshot',
-        qwenTitle: 'Qwen',
-        qwenTokenPlan: 'Token Plan',
-        qwenMonthly: '月度额度',
-        qwenPlanLeft: '套餐剩 {percent}%',
-        missingConsoleToken: '未配置 Qwen 控制台 Token',
-        creditsRemaining: '剩余额度',
-        creditsPurchased: '已购买额度',
-        creditsUsed: '已使用',
-        usedMonth: '本月已用 {amount}',
-        usedMonthName: '本月已用',
-        usedRequests: '本月已用 {count} 次',
-        requestCountName: '请求数',
-        tokenUsage: '输入 / 输出 Tokens',
-        copilotPremium: 'Premium 请求',
-        copilotChat: 'Chat 额度',
-        planLeft: '套餐剩 {percent}%',
-        monthlyName: '月额度',
-        creditsApplied: '已用抵扣',
-        chargedAmount: '实付小计',
-        cycleUsage: '本期已用',
-        missingManagementKey: '未配置 xAI Management Key',
-        badgeFiveHour: '5h {percent}%',
-        badgeWeekly: '周 {percent}%',
-        badgePlan: '套餐 {percent}%',
-        credentialsTitle: '供应商额外凭证',
-        credentialsHint: '部分供应商除推理 Key 外还需要一份控制台凭证才能读取额度。值只写入 Host 凭据库，不会回传浏览器。',
-        credentialsEffective: '保存后在下一次额度刷新时生效（最长约 60 秒）。',
-        mimoCookie: 'Xiaomi MiMo 控制台 Cookie',
-        mimoCookieHint: '用于 xiaomi 与 xiaomi-token-plan 供应商。登录 platform.xiaomimimo.com 后，从任意 /api/v1/ 请求复制完整 Cookie，至少包含 serviceToken 与 userId。',
-        mimoCookiePlaceholder: 'serviceToken=...; userId=...',
-        qwenToken: 'Qwen 控制台 Access Token',
-        qwenTokenHint: '用于 qwen-token-plan 供应商。执行 bl auth login --console 后，从 ~/.bailian/config.json 复制 access_token。',
-        qwenTokenPlaceholder: '粘贴控制台 access_token',
-        xaiKey: 'xAI Management Key',
-        xaiKeyHint: '用于 xai 供应商的余额查询。推理 API Key 无法读取账单，请在 console.x.ai → Settings → Management Keys 创建只读 Key（需 Team 作用域）。',
-        xaiKeyPlaceholder: 'xai-...',
-        adminKey: 'Anthropic / OpenAI Admin Key',
-        adminKeyHint: '用于 anthropic 与 openai 供应商的本月用量查询。普通推理 Key 无法读取用量：Anthropic 在 Console → Settings → Admin Keys 创建 sk-ant-admin…，OpenAI 在 platform.openai.com → Admin keys 创建 sk-admin…（需组织 Owner）。',
-        adminKeyPlaceholder: 'sk-ant-admin-… / sk-admin-…',
-        githubToken: 'GitHub Token（Copilot 额度）',
-        githubTokenHint: '用于 github-copilot 供应商的 Premium Requests 配额查询。任意 GitHub Token（ghp_ / gho_ / fine-grained 且 Plan: read）均可。',
-        githubTokenPlaceholder: 'ghp_… / gho_…',
-        codexToken: 'ChatGPT OAuth Token（Codex 额度）',
-        codexTokenHint: '用于 openai-codex 供应商的 5 小时 / 周配额查询。取 ChatGPT OAuth access token（如 Codex CLI 登录后的凭证），接口非公开、可能变动。',
-        codexTokenPlaceholder: 'eyJ…',
-        codexAccount: 'ChatGPT Account ID',
-        codexAccountHint: 'openai-codex 配额查询所需的 ChatGPT-Account-Id 头，与上面的 Token 配套使用。',
-        codexAccountPlaceholder: 'account_…',
-        cloudflareToken: 'Cloudflare API Token',
-        cloudflareTokenHint: '用于 cloudflare 供应商的余额 / 花费查询。需账户级 API Token（AI Gateway Read / Billing Read 权限），与推理用 Token 分开。',
-        cloudflareTokenPlaceholder: '粘贴 API Token',
-        cloudflareAccount: 'Cloudflare Account ID',
-        cloudflareAccountHint: 'cloudflare 查询所需的账户 ID，可在 Cloudflare Dashboard 右侧栏查看。',
-        cloudflareAccountPlaceholder: '32 位十六进制 Account ID',
-        credentialConfigured: '已配置',
-        credentialNotConfigured: '未配置',
-        credentialVia: '已配置（{ref}）',
-        credentialSource: '来源：{source}',
-        credentialReadOnly: '该凭证由当前配置层提供，无法在此修改。',
-        credentialLoading: '读取中…',
-        credentialSave: '保存',
-        credentialSaving: '保存中…',
-        credentialClear: '清除',
-        credentialClearing: '清除中…',
-        credentialShow: '显示',
-        credentialHide: '隐藏',
-        credentialSaved: '已保存，将在下一次额度刷新时生效。',
-        credentialEmpty: '请输入凭证内容。',
-        credentialSaveFailed: '保存失败：{message}',
-        credentialClearFailed: '清除失败：{message}',
-        credentialLoadFailed: '无法读取凭证状态：{message}',
-      },
-      en: {
-        title: 'Model quota',
-        details: 'Model quota details',
-        balance: 'Balance {amount}',
-        balanceTitle: 'DeepSeek balance',
-        fiveHour: '5h {percent}% left',
-        weekly: 'Week {percent}% left',
-        fiveHourName: '5-hour quota',
-        weeklyName: 'Weekly quota',
-        remaining: '{percent}% left',
-        resetsIn: 'Resets in {time}',
-        resetsAt: 'Resets {time}',
-        toppedUp: 'Topped-up balance',
-        bonus: 'Bonus balance',
-        status: 'Status',
-        available: 'Available',
-        insufficient: 'Insufficient',
-        updatedAt: 'Updated {time}',
-        stale: 'Data may be stale',
-        error: 'Quota unavailable',
-        missingCredential: 'API key not configured',
-        missingAdminKey: 'Admin key not configured',
-        missingGitHubToken: 'GitHub token not configured',
-        missingCodexToken: 'ChatGPT OAuth token not configured',
-        missingCloudflareCredential: 'Cloudflare API token or account ID not configured',
-        missingCookie: 'MiMo console cookie not configured',
-        signedOut: 'Sign in to DeepSeek',
-        mimoTitle: 'Xiaomi MiMo',
-        mimoPayg: 'Pay as you go',
-        mimoTokenPlan: 'Token Plan',
-        mimoPlanLeft: 'Plan {percent}% left',
-        mimoBalance: 'Remaining balance',
-        mimoCash: 'Cash balance',
-        mimoGift: 'Bonus balance',
-        mimoFrozen: 'Frozen funds',
-        mimoPlan: 'Token Plan',
-        mimoMonth: 'This month',
-        mimoCompensation: 'Compensation credits',
-        mimoUsed: '{used} / {limit} ({percent}% used)',
-        moonshotTitle: 'Moonshot',
-        qwenTitle: 'Qwen',
-        qwenTokenPlan: 'Token Plan',
-        qwenMonthly: 'Monthly quota',
-        qwenPlanLeft: 'Plan {percent}% left',
-        missingConsoleToken: 'Qwen console token not configured',
-        creditsRemaining: 'Credits remaining',
-        creditsPurchased: 'Credits purchased',
-        creditsUsed: 'Usage',
-        usedMonth: 'Month to date {amount}',
-        usedMonthName: 'Used this month',
-        usedRequests: '{count} requests this month',
-        requestCountName: 'Requests',
-        tokenUsage: 'Input / output tokens',
-        copilotPremium: 'Premium requests',
-        copilotChat: 'Chat allowance',
-        planLeft: 'Plan {percent}% left',
-        monthlyName: 'Monthly quota',
-        creditsApplied: 'Credits applied',
-        chargedAmount: 'Charged subtotal',
-        cycleUsage: 'Billing cycle usage',
-        missingManagementKey: 'xAI management key not configured',
-        badgeFiveHour: '5h {percent}%',
-        badgeWeekly: 'Wk {percent}%',
-        badgePlan: 'Plan {percent}%',
-        credentialsTitle: 'Provider credentials',
-        credentialsHint: 'Some providers need an extra console credential, beyond the inference key, to read quota. Values are stored in the Host credential store and never returned to the browser.',
-        credentialsEffective: 'Changes take effect on the next quota refresh (up to 60 seconds).',
-        mimoCookie: 'Xiaomi MiMo console cookie',
-        mimoCookieHint: 'Used by the xiaomi and xiaomi-token-plan providers. Sign in to platform.xiaomimimo.com, copy the full Cookie header from any /api/v1/ request, and keep at least serviceToken and userId.',
-        mimoCookiePlaceholder: 'serviceToken=...; userId=...',
-        qwenToken: 'Qwen console access token',
-        qwenTokenHint: 'Used by qwen-token-plan providers. Run bl auth login --console and copy access_token from ~/.bailian/config.json.',
-        qwenTokenPlaceholder: 'Paste the console access_token',
-        xaiKey: 'xAI management key',
-        xaiKeyHint: 'Used for the xai provider quota. Inference API keys cannot read billing; create a read-only, team-scoped key under console.x.ai → Settings → Management Keys.',
-        xaiKeyPlaceholder: 'xai-...',
-        adminKey: 'Anthropic / OpenAI admin key',
-        adminKeyHint: 'Used for the anthropic and openai month-to-date usage. Plain inference keys cannot read usage: create sk-ant-admin… under Console → Settings → Admin Keys (Anthropic) or sk-admin… under platform.openai.com → Admin keys (OpenAI, organization owner only).',
-        adminKeyPlaceholder: 'sk-ant-admin-… / sk-admin-…',
-        githubToken: 'GitHub token (Copilot quota)',
-        githubTokenHint: 'Used for the github-copilot premium request quota. Any GitHub token works (ghp_ / gho_ / fine-grained with Plan: read).',
-        githubTokenPlaceholder: 'ghp_… / gho_…',
-        codexToken: 'ChatGPT OAuth token (Codex quota)',
-        codexTokenHint: 'Used for the openai-codex 5-hour / weekly windows. Provide a ChatGPT OAuth access token (for example from the Codex CLI login); the endpoint is unofficial and may change.',
-        codexTokenPlaceholder: 'eyJ…',
-        codexAccount: 'ChatGPT account ID',
-        codexAccountHint: 'The ChatGPT-Account-Id header value used together with the token above.',
-        codexAccountPlaceholder: 'account_…',
-        cloudflareToken: 'Cloudflare API token',
-        cloudflareTokenHint: 'Used for the cloudflare balance / spend query. Needs an account-level API token (AI Gateway Read / Billing Read); keep it separate from the inference token.',
-        cloudflareTokenPlaceholder: 'Paste the API token',
-        cloudflareAccount: 'Cloudflare account ID',
-        cloudflareAccountHint: 'The account ID the cloudflare query targets; shown in the Cloudflare Dashboard sidebar.',
-        cloudflareAccountPlaceholder: '32-character account ID',
-        credentialConfigured: 'Configured',
-        credentialNotConfigured: 'Not configured',
-        credentialVia: 'Configured ({ref})',
-        credentialSource: 'Source: {source}',
-        credentialReadOnly: 'This credential comes from the current configuration layer and cannot be changed here.',
-        credentialLoading: 'Reading…',
-        credentialSave: 'Save',
-        credentialSaving: 'Saving…',
-        credentialClear: 'Clear',
-        credentialClearing: 'Clearing…',
-        credentialShow: 'Show',
-        credentialHide: 'Hide',
-        credentialSaved: 'Saved. It takes effect on the next quota refresh.',
-        credentialEmpty: 'Enter a credential value.',
-        credentialSaveFailed: 'Could not save: {message}',
-        credentialClearFailed: 'Could not clear: {message}',
-        credentialLoadFailed: 'Could not read credential status: {message}',
-      },
     }
 
     const TOKENS = {
@@ -324,8 +112,12 @@ window.__ModuleLoader__.load({
       h('path', { d: 'M8 4.6v6.8M6.2 6.4h2.3a1.3 1.3 0 0 1 0 2.6H6.2M6.2 8.4h2.6', fill: 'none', stroke: 'currentColor', strokeWidth: 1.2, strokeLinecap: 'round' }))
     }
 
+    // Message cache backing the fallback translator. The primary `t` is the one
+    // the locale service binds after the Host dictionaries register.
+    let messages = {}
+
     function fallbackTranslate(key, params) {
-      const template = DICT.en[key] ?? key
+      const template = messages.en?.[key] ?? key
       return template.replace(/\{(\w+)\}/g, (_, name) => (
         params && params[name] !== undefined ? String(params[name]) : `{${name}}`
       ))
@@ -344,10 +136,14 @@ window.__ModuleLoader__.load({
       return String(error ?? 'unknown error').slice(0, 300)
     }
 
-    /** Resolve a credential Remote call as a result, or throw its error. */
-    async function credentialResult(call) {
+    /** Resolve a Remote call as a result, or throw its error. */
+    async function remoteResult(call) {
       const response = await call()
-      if (!response || response.ok !== true) throw new Error(remoteErrorText(response?.error))
+      if (!response || response.ok !== true) {
+        const failure = new Error(remoteErrorText(response?.error))
+        if (typeof response?.error?.code === 'string') failure.code = response.error.code
+        throw failure
+      }
       return response.value
     }
 
@@ -368,6 +164,42 @@ window.__ModuleLoader__.load({
       const data = await response.json()
       if (!data || typeof data !== 'object' || Array.isArray(data)) {
         throw new Error('invalid quota response')
+      }
+      return data
+    }
+
+    // Dictionaries live in the bundle's `locale/*.json` (single source of truth
+    // for every user-facing string, shared with the plugin manager page) and
+    // arrive through the Host i18n route.
+    async function requestDictionaries(signal) {
+      const response = await fetch('/api/llm-quota/i18n', {
+        signal,
+        headers: { Accept: 'application/json' },
+      })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const data = await response.json()
+      if (!data || data.ok !== true || !data.dictionaries || typeof data.dictionaries !== 'object' || Array.isArray(data.dictionaries)) {
+        throw new Error('invalid i18n response')
+      }
+      return data.dictionaries
+    }
+
+    async function requestQuotaHistory(provider, range, signal) {
+      const selected = HISTORY_RANGES.find((entry) => entry.id === normalizeHistoryRange(range))
+      const query = new URLSearchParams()
+      if (range !== null && range !== undefined) {
+        if (selected.hours) query.set('hours', String(selected.hours))
+        else query.set('days', String(selected.days))
+      }
+      if (provider) query.set('provider', provider)
+      const response = await fetch(`/api/llm-quota/history?${query}`, {
+        signal,
+        headers: { Accept: 'application/json' },
+      })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const data = await response.json()
+      if (!data || data.ok !== true || !Array.isArray(data.points)) {
+        throw new Error('invalid quota history response')
       }
       return data
     }
@@ -564,6 +396,307 @@ window.__ModuleLoader__.load({
       h('span', { style: { minWidth: 0, textAlign: 'right' } },
         h('span', { style: { color: TOKENS.textStrong, fontVariantNumeric: 'tabular-nums' } }, value),
         note ? h('span', { style: { display: 'block', color: TOKENS.textDim, fontSize: 11, lineHeight: '16px' } }, note) : null))
+    }
+
+    const HISTORY_AMOUNT_METRICS = new Set(['amount', 'usedAmount', 'cycleUsage'])
+    const HISTORY_METRIC_PRIORITY = [
+      'amount', 'usedAmount', 'cycleUsage', 'fiveHour', 'plan', 'weekly', 'monthly',
+      'chat', 'plan.month', 'plan.compensation',
+    ]
+
+    function historySeries(points) {
+      const groups = new Map()
+      for (const point of points) {
+        const time = Date.parse(point?.at)
+        if (!Number.isFinite(time) || !point.metrics || typeof point.metrics !== 'object') continue
+        for (const [key, raw] of Object.entries(point.metrics)) {
+          const value = typeof raw === 'number' ? raw : Number(raw)
+          if (!Number.isFinite(value)) continue
+          const unit = HISTORY_AMOUNT_METRICS.has(key) ? (point.currency ?? '') : 'percent'
+          const id = `${key}:${unit}`
+          if (!groups.has(id)) groups.set(id, { id, key, unit, points: [] })
+          groups.get(id).points.push({ at: point.at, time, raw, value })
+        }
+      }
+      return [...groups.values()]
+    }
+
+    function preferredHistorySeries(series) {
+      for (const key of HISTORY_METRIC_PRIORITY) {
+        const match = series.find((entry) => entry.key === key)
+        if (match) return match
+      }
+      return series[0]
+    }
+
+    function historyMetricLabel(key, tr) {
+      const labels = {
+        amount: 'metricAmount',
+        usedAmount: 'metricUsedAmount',
+        cycleUsage: 'metricCycleUsage',
+        fiveHour: 'fiveHourName',
+        weekly: 'weeklyName',
+        monthly: 'monthlyName',
+        plan: 'metricPlan',
+        chat: 'copilotChat',
+        'plan.month': 'mimoMonth',
+        'plan.compensation': 'mimoCompensation',
+      }
+      return tr(labels[key] ?? key)
+    }
+
+    function historyValue(unit, value, precise = false) {
+      if (unit === 'percent') return `${formatNumber(value)}%`
+      if (precise) {
+        const symbol = unit === 'CNY' ? '¥' : unit === 'USD' ? '$' : ''
+        const suffix = symbol || !unit ? '' : ` ${unit}`
+        return `${symbol}${String(value)}${suffix}`
+      }
+      return formatAmount(unit, value)
+    }
+
+    function historyDelta(unit, value) {
+      const sign = value > 0 ? '+' : value < 0 ? '-' : ''
+      return `${sign}${historyValue(unit, Math.abs(value))}`
+    }
+
+    function preciseTime(time) {
+      return new Date(time).toLocaleString(undefined, {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      })
+    }
+
+    function HistoryChart({ series, since, tr, onRangeStep }) {
+      const svgRef = React.useRef(null)
+      React.useEffect(() => {
+        const svg = svgRef.current
+        if (!svg) return undefined
+        const onWheel = (event) => {
+          if (event.deltaY === 0) return
+          event.preventDefault()
+          event.stopPropagation()
+          onRangeStep(event.deltaY < 0 ? -1 : 1)
+        }
+        svg.addEventListener('wheel', onWheel, { passive: false })
+        return () => svg.removeEventListener('wheel', onWheel)
+      }, [onRangeStep])
+
+      const parsedStart = Date.parse(since)
+      const firstPoint = series.points[0]
+      const start = Number.isFinite(parsedStart) ? parsedStart : firstPoint.time
+      const end = Math.max(Date.now(), start + 1)
+      let baseline
+      const changes = []
+      for (const point of series.points) {
+        if (point.time <= start) baseline = point
+        else if (point.time <= end) changes.push(point)
+      }
+      const actual = baseline ? [baseline, ...changes] : changes
+      if (actual.length === 0) return null
+      const drawn = baseline ? [{ ...baseline, time: start }, ...changes] : [...changes]
+      const lastDrawn = drawn[drawn.length - 1]
+      if (lastDrawn.time < end) drawn.push({ ...lastDrawn, time: end, synthetic: true })
+
+      const width = 320
+      const height = 140
+      const left = 46
+      const right = 8
+      const top = 10
+      const bottom = 25
+      const plotWidth = width - left - right
+      const plotHeight = height - top - bottom
+      const values = drawn.map((point) => point.value)
+      let minimum = Math.min(...values)
+      let maximum = Math.max(...values)
+      if (series.unit === 'percent') {
+        minimum = 0
+        maximum = 100
+      } else {
+        const spread = maximum - minimum
+        const padding = spread > 0 ? spread * 0.15 : Math.max(Math.abs(maximum) * 0.05, 1)
+        minimum -= padding
+        maximum += padding
+      }
+      const x = (time) => left + Math.max(0, Math.min(1, (time - start) / (end - start))) * plotWidth
+      const y = (value) => top + (maximum - value) / (maximum - minimum) * plotHeight
+      let path = `M ${x(drawn[0].time)} ${y(drawn[0].value)}`
+      for (let index = 1; index < drawn.length; index += 1) {
+        path += ` H ${x(drawn[index].time)} V ${y(drawn[index].value)}`
+      }
+
+      const first = actual[0]
+      const last = actual[actual.length - 1]
+      const label = historyMetricLabel(series.key, tr)
+      const stat = (name, value) => h('span', { style: { minWidth: 0 } },
+        h('span', { style: { display: 'block', color: TOKENS.textDim, fontSize: 10 } }, name),
+        h('span', { style: { color: TOKENS.textStrong, fontVariantNumeric: 'tabular-nums' } }, value))
+      const circleStep = Math.max(1, Math.ceil(changes.length / 100))
+      const circles = changes.filter((_point, index) => index % circleStep === 0)
+
+      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11 } },
+          stat(tr('historyFirst'), historyValue(series.unit, first.raw)),
+          stat(tr('historyLatest'), historyValue(series.unit, last.raw)),
+          stat(tr('historyChange'), historyDelta(series.unit, last.value - first.value))),
+        h('svg', {
+          ref: svgRef,
+          viewBox: `0 0 ${width} ${height}`,
+          width: '100%',
+          role: 'img',
+          title: tr('historyWheelHint'),
+          'aria-label': tr('historyChartLabel', { metric: label }),
+          style: { display: 'block', overflow: 'visible' },
+        },
+        [0, 0.5, 1].map((ratio) => {
+          const lineY = top + ratio * plotHeight
+          const value = maximum - ratio * (maximum - minimum)
+          return h('g', { key: ratio },
+            h('line', {
+              x1: left, x2: width - right, y1: lineY, y2: lineY,
+              stroke: TOKENS.border, strokeWidth: 0.6,
+            }),
+            h('text', {
+              x: left - 6, y: lineY + 3, textAnchor: 'end',
+              fill: TOKENS.textDim, fontSize: 9,
+            }, historyValue(series.unit, value)))
+        }),
+        h('path', {
+          d: path, fill: 'none', stroke: TOKENS.link, strokeWidth: 1.8,
+          strokeLinejoin: 'round', strokeLinecap: 'round',
+        }),
+        circles.map((point, index) => h('circle', {
+          key: `${point.at}-${index}`,
+          cx: x(point.time), cy: y(point.value), r: 2.5,
+          fill: TOKENS.link, stroke: TOKENS.panel, strokeWidth: 1,
+        }, h('title', null, `${preciseTime(point.at)}\n${label}: ${historyValue(series.unit, point.raw, true)}`))),
+        h('text', { x: left, y: height - 4, fill: TOKENS.textDim, fontSize: 9 }, absoluteTime(start)),
+        h('text', {
+          x: width - right, y: height - 4, textAnchor: 'end',
+          fill: TOKENS.textDim, fontSize: 9,
+        }, absoluteTime(end))))
+    }
+
+    function QuotaHistory({ provider, tr }) {
+      const [range, setRange] = React.useState(DEFAULT_HISTORY_RANGE)
+      const [selected, setSelected] = React.useState('')
+      const [state, setState] = React.useState({ loading: true, error: false, points: [], since: '' })
+      const lastWheelAt = React.useRef(0)
+      const userSelectedRef = React.useRef(false)
+      const initialRequestedRef = React.useRef(false)
+      const selectRange = (value) => {
+        userSelectedRef.current = true
+        setRange(normalizeHistoryRange(value))
+      }
+      const onRangeStep = React.useCallback((direction) => {
+        const now = Date.now()
+        if (now - lastWheelAt.current < HISTORY_WHEEL_STEP_MS) return
+        lastWheelAt.current = now
+        userSelectedRef.current = true
+        setRange((current) => {
+          const index = HISTORY_RANGES.findIndex((entry) => entry.id === current)
+          const next = Math.max(0, Math.min(HISTORY_RANGES.length - 1, index + direction))
+          return HISTORY_RANGES[next].id
+        })
+      }, [])
+
+      React.useEffect(() => {
+        let disposed = false
+        let active = null
+        const initial = !initialRequestedRef.current
+        initialRequestedRef.current = true
+        const load = async () => {
+          if (active) return
+          const controller = new AbortController()
+          const abortTimer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+          const current = { controller, abortTimer }
+          active = current
+          try {
+            const data = await requestQuotaHistory(provider, initial ? null : range, controller.signal)
+            if (disposed) return
+            const configuredRange = normalizeHistoryRange(data.historyDefaultRange)
+            if (configuredRange !== range && !userSelectedRef.current) {
+              setRange(configuredRange)
+            } else {
+              setState({ loading: false, error: false, points: data.points, since: data.since })
+            }
+          } catch {
+            if (!disposed) setState((previous) => ({ ...previous, loading: false, error: true }))
+          } finally {
+            clearTimeout(abortTimer)
+            if (active === current) active = null
+          }
+        }
+        setState({ loading: true, error: false, points: [], since: '' })
+        void load()
+        const timer = setInterval(() => { void load() }, HISTORY_REFRESH_MS)
+        return () => {
+          disposed = true
+          clearInterval(timer)
+          if (active) {
+            clearTimeout(active.abortTimer)
+            active.controller.abort()
+            active = null
+          }
+        }
+      }, [provider, range])
+
+      const series = historySeries(state.points)
+      const current = series.find((entry) => entry.id === selected) ?? preferredHistorySeries(series)
+      const selectStyle = {
+        maxWidth: 158,
+        height: 26,
+        padding: '0 4px',
+        border: `0.5px solid ${TOKENS.inputBorder}`,
+        borderRadius: TOKENS.radiusSm,
+        background: TOKENS.input,
+        color: TOKENS.textStrong,
+        font: 'inherit',
+        fontSize: 11,
+      }
+      let content
+      if (state.loading && state.points.length === 0) {
+        content = h('div', { style: { color: TOKENS.textDim } }, tr('historyLoading'))
+      } else if (state.error && state.points.length === 0) {
+        content = h('div', { style: { color: TOKENS.textDim } }, tr('historyError'))
+      } else if (state.points.length === 0) {
+        content = h('div', { style: { color: TOKENS.textDim } }, tr('historyEmpty'))
+      } else if (!current) {
+        content = h('div', { style: { color: TOKENS.textDim } }, tr('historyNoMetrics'))
+      } else {
+        content = h(HistoryChart, { series: current, since: state.since, tr, onRangeStep })
+      }
+
+      return h('div', {
+        style: {
+          display: 'flex', flexDirection: 'column', gap: 8,
+          paddingTop: 8, borderTop: `0.5px solid ${TOKENS.border}`,
+        },
+      },
+      h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 } },
+        h('span', { style: { color: TOKENS.textStrong, fontWeight: 500 } }, tr('historyTitle')),
+        h('select', {
+          value: range,
+          onChange: (event) => selectRange(event.target.value),
+          'aria-label': tr('historyTitle'),
+          style: selectStyle,
+        }, HISTORY_RANGES.map((entry) => h('option', { key: entry.id, value: entry.id }, tr(entry.label))))),
+      series.length > 1 ? h('label', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 } },
+        h('span', { style: { color: TOKENS.textDim } }, tr('historyMetric')),
+        h('select', {
+          value: current?.id ?? '',
+          onChange: (event) => setSelected(event.target.value),
+          'aria-label': tr('historyMetric'),
+          style: selectStyle,
+        }, series.map((entry) => h('option', { key: entry.id, value: entry.id }, historyMetricLabel(entry.key, tr))))) : null,
+      state.error && state.points.length > 0
+        ? h('div', { style: { color: TOKENS.textDim, fontSize: 11 } }, tr('historyError'))
+        : null,
+      content)
     }
 
     // Model-selection labels are decorated through the DOM hooks ui-model-selection
@@ -769,7 +902,7 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
         setLoading(true)
         setLoadError('')
         try {
-          const value = await credentialResult(() => describeRef.current(refs))
+          const value = await remoteResult(() => describeRef.current(refs))
           if (!alive.current) return
           setViews(value && typeof value === 'object' ? value : {})
         } catch (failure) {
@@ -817,7 +950,7 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
         setError(null)
         setNotice('')
         try {
-          await credentialResult(() => writeRef.current(refs[0], draft))
+          await remoteResult(() => writeRef.current(refs[0], draft))
           if (!alive.current) return
           setDraft('')
           setNotice('credentialSaved')
@@ -838,7 +971,7 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
         try {
           for (const ref of configuredRefs) {
             if (views?.[ref]?.writable === false) continue
-            await credentialResult(() => removeRef.current(ref))
+            await remoteResult(() => removeRef.current(ref))
           }
           if (!alive.current) return
           await load()
@@ -933,6 +1066,256 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
       }, tr(notice)) : null)
     }
 
+    function createSettingsDraft(value = {}) {
+      return {
+        cacheSeconds: String(value.cacheSeconds ?? 30),
+        history: value.history !== false,
+        historyDefaultRange: normalizeHistoryRange(value.historyDefaultRange),
+        historyIntervalSeconds: String(value.historyIntervalSeconds ?? 30),
+        providers: JSON.stringify(value.providers ?? {}, null, 2),
+      }
+    }
+
+    function settingsOperations(draft, snapshot) {
+      const current = snapshot.value ?? {}
+      const user = snapshot.user && typeof snapshot.user === 'object' ? snapshot.user : {}
+      const cacheText = draft.cacheSeconds.trim()
+      const intervalText = draft.historyIntervalSeconds.trim()
+      const providersText = draft.providers.trim()
+      let cacheSeconds
+      let historyIntervalSeconds
+      let providers
+
+      const historyDefaultRange = normalizeHistoryRange(draft.historyDefaultRange)
+      if (historyDefaultRange !== draft.historyDefaultRange) {
+        return { error: { key: 'historyDefaultRangeInvalid' } }
+      }
+      if (cacheText) {
+        cacheSeconds = Number(cacheText)
+        if (!Number.isFinite(cacheSeconds) || cacheSeconds < 0) return { error: { key: 'cacheSecondsInvalid' } }
+      }
+      if (intervalText) {
+        historyIntervalSeconds = Number(intervalText)
+        if (!Number.isFinite(historyIntervalSeconds) || historyIntervalSeconds < 1) {
+          return { error: { key: 'historyIntervalInvalid' } }
+        }
+      }
+      if (providersText) {
+        try {
+          providers = JSON.parse(providersText)
+        } catch (failure) {
+          return { error: { key: 'providersJsonInvalid', message: failure.message } }
+        }
+        const valid = providers && typeof providers === 'object' && !Array.isArray(providers)
+          && Object.entries(providers).every(([id, entry]) => (
+            id.trim() !== '' && entry && typeof entry === 'object' && !Array.isArray(entry)
+          ))
+        if (!valid) return { error: { key: 'providersInvalid' } }
+      }
+
+      const fields = [
+        ['cacheSeconds', cacheSeconds, cacheText === '', Object.is(current.cacheSeconds ?? 30, cacheSeconds)],
+        ['history', draft.history, false, Object.is(current.history !== false, draft.history)],
+        ['historyDefaultRange', historyDefaultRange, false, Object.is(normalizeHistoryRange(current.historyDefaultRange), historyDefaultRange)],
+        ['historyIntervalSeconds', historyIntervalSeconds, intervalText === '', Object.is(current.historyIntervalSeconds ?? 30, historyIntervalSeconds)],
+        ['providers', providers, providersText === '', JSON.stringify(current.providers ?? {}) === JSON.stringify(providers)],
+      ]
+      const ops = []
+      for (const [path, value, unset, unchanged] of fields) {
+        if (unset) {
+          if (Object.prototype.hasOwnProperty.call(user, path)) ops.push({ op: 'unset', path: [path] })
+        } else if (!unchanged) {
+          ops.push({ op: 'set', path: [path], value })
+        }
+      }
+      return { ops }
+    }
+
+    function QuotaSettings(props) {
+      const tr = props.t
+      const describeRef = React.useRef(props.describeSettings)
+      const mutateRef = React.useRef(props.mutateSettings)
+      describeRef.current = props.describeSettings
+      mutateRef.current = props.mutateSettings
+
+      const alive = React.useRef(true)
+      const [snapshot, setSnapshot] = React.useState(null)
+      const [draft, setDraft] = React.useState(null)
+      const [loading, setLoading] = React.useState(true)
+      const [busy, setBusy] = React.useState(false)
+      const [error, setError] = React.useState(null)
+      const [notice, setNotice] = React.useState('')
+
+      const load = React.useCallback(async () => {
+        setLoading(true)
+        setError(null)
+        setNotice('')
+        try {
+          const value = await remoteResult(() => describeRef.current())
+          if (!alive.current) return
+          const namespace = value?.namespaces?.find((entry) => entry.ns === NS)
+          if (!namespace) {
+            setSnapshot(null)
+            setDraft(null)
+            setError({ key: 'settingsNotFound' })
+            return
+          }
+          setSnapshot({ ...namespace, writable: value.writable !== false })
+          setDraft(createSettingsDraft(namespace.value))
+        } catch (failure) {
+          if (!alive.current) return
+          setSnapshot(null)
+          setDraft(null)
+          setError({ key: 'settingsLoadFailed', message: remoteErrorText(failure) })
+        } finally {
+          if (alive.current) setLoading(false)
+        }
+      }, [])
+
+      React.useEffect(() => {
+        alive.current = true
+        load()
+        return () => {
+          alive.current = false
+        }
+      }, [load])
+
+      const disabled = loading || busy || !draft || !snapshot || snapshot.writable === false
+      const update = (field, value) => {
+        setDraft((current) => ({ ...current, [field]: value }))
+        setError(null)
+        setNotice('')
+      }
+      const save = async () => {
+        if (disabled) return
+        const result = settingsOperations(draft, snapshot)
+        if (result.error) {
+          setError(result.error)
+          setNotice('')
+          return
+        }
+        if (result.ops.length === 0) {
+          setError(null)
+          setNotice('settingsNoChanges')
+          return
+        }
+        setBusy(true)
+        setError(null)
+        setNotice('')
+        try {
+          const value = await remoteResult(() => mutateRef.current(NS, result.ops, snapshot.revision))
+          if (!alive.current) return
+          setSnapshot((current) => ({ ...current, ...value, writable: current.writable }))
+          setDraft(createSettingsDraft(value.value))
+          setNotice('settingsSaved')
+        } catch (failure) {
+          if (!alive.current) return
+          if (failure.code === 'SETTINGS_CONFLICT') {
+            await load()
+            if (alive.current) setError({ key: 'settingsConflict' })
+          } else {
+            setError({ key: 'settingsSaveFailed', message: remoteErrorText(failure) })
+          }
+        } finally {
+          if (alive.current) setBusy(false)
+        }
+      }
+
+      const inputStyle = {
+        width: '100%',
+        maxWidth: 260,
+        height: 30,
+        boxSizing: 'border-box',
+        padding: '0 10px',
+        borderRadius: TOKENS.radiusSm,
+        border: `1px solid ${TOKENS.inputBorder}`,
+        background: TOKENS.input,
+        color: TOKENS.textStrong,
+        font: 'inherit',
+        fontSize: 12,
+        outline: 'none',
+      }
+      const labelStyle = { color: TOKENS.textStrong, fontSize: 12, fontWeight: 500 }
+      const hintStyle = { margin: 0, color: TOKENS.textDim, fontSize: 11, lineHeight: '16px' }
+
+      return h('section', {
+        style: { display: 'flex', flexDirection: 'column', gap: 10, paddingBottom: 12 },
+      },
+      h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } },
+        h('h3', { style: { margin: 0, color: TOKENS.textStrong, fontSize: 13, fontWeight: 600 } }, tr('settingsTitle')),
+        h('p', { style: { margin: 0, color: TOKENS.textSecondary, fontSize: 12, lineHeight: '18px' } }, tr('settingsHint'))),
+      loading && !draft ? h('p', { style: hintStyle }, tr('settingsLoading')) : null,
+      draft ? h(React.Fragment, null,
+        h('label', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+          h('span', { style: labelStyle }, tr('cacheSeconds')),
+          h('input', {
+            type: 'number', min: 0, step: 'any', value: draft.cacheSeconds, disabled,
+            'aria-label': tr('cacheSeconds'),
+            onChange: (event) => update('cacheSeconds', event.target.value),
+            style: inputStyle,
+          }),
+          h('p', { style: hintStyle }, tr('cacheSecondsHint'))),
+        h('label', { style: { display: 'flex', alignItems: 'flex-start', gap: 8 } },
+          h('input', {
+            type: 'checkbox', checked: draft.history, disabled,
+            'aria-label': tr('historyEnabled'),
+            onChange: (event) => update('history', event.target.checked),
+            style: { margin: '2px 0 0' },
+          }),
+          h('span', { style: { display: 'flex', flexDirection: 'column', gap: 2 } },
+            h('span', { style: labelStyle }, tr('historyEnabled')),
+            h('span', { style: hintStyle }, tr('historyEnabledHint')))),
+        h('label', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+          h('span', { style: labelStyle }, tr('historyDefaultRange')),
+          h('select', {
+            value: draft.historyDefaultRange, disabled,
+            'aria-label': tr('historyDefaultRange'),
+            onChange: (event) => update('historyDefaultRange', event.target.value),
+            style: inputStyle,
+          }, HISTORY_RANGES.map((entry) => h('option', { key: entry.id, value: entry.id }, tr(entry.label)))),
+          h('p', { style: hintStyle }, tr('historyDefaultRangeHint'))),
+        h('label', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+          h('span', { style: labelStyle }, tr('historyIntervalSeconds')),
+          h('input', {
+            type: 'number', min: 1, step: 'any', value: draft.historyIntervalSeconds,
+            disabled: disabled || !draft.history,
+            'aria-label': tr('historyIntervalSeconds'),
+            onChange: (event) => update('historyIntervalSeconds', event.target.value),
+            style: inputStyle,
+          }),
+          h('p', { style: hintStyle }, tr('historyIntervalSecondsHint'))),
+        h('label', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+          h('span', { style: labelStyle }, tr('providersConfig')),
+          h('textarea', {
+            value: draft.providers, disabled, rows: 8, spellCheck: false,
+            'aria-label': tr('providersConfig'),
+            onChange: (event) => update('providers', event.target.value),
+            style: {
+              ...inputStyle,
+              maxWidth: 'none',
+              height: 'auto',
+              minHeight: 160,
+              padding: 10,
+              fontFamily: 'monospace',
+              lineHeight: '18px',
+              resize: 'vertical',
+            },
+          }),
+          h('p', { style: hintStyle }, tr('providersConfigHint'))),
+        h('div', null, h('button', {
+          type: 'button', disabled, onClick: save, style: rowButton(disabled, true),
+        }, busy ? tr('settingsSaving') : tr('settingsSave')))) : null,
+      snapshot?.writable === false ? h('p', { style: hintStyle }, tr('settingsReadOnly')) : null,
+      error ? h('p', {
+        role: 'alert',
+        style: { margin: 0, color: TOKENS.danger, fontSize: 11, lineHeight: '16px' },
+      }, tr(error.key, { message: error.message })) : null,
+      notice ? h('p', {
+        role: 'status',
+        style: { margin: 0, color: TOKENS.textSecondary, fontSize: 11, lineHeight: '16px' },
+      }, tr(notice)) : null)
+    }
+
     /**
      * Bundle configuration page: the console credentials that providers such as
      * Xiaomi MiMo and Qwen Token Plan need in addition to their inference key.
@@ -1013,6 +1396,17 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
           hint: tr('cloudflareAccountHint'),
           placeholder: tr('cloudflareAccountPlaceholder'),
         }))
+    }
+
+    function PluginConfigPage(props) {
+      const tr = typeof props.t === 'function' ? props.t : fallbackTranslate
+      return h(React.Fragment, null,
+        h(QuotaSettings, {
+          t: tr,
+          describeSettings: props.describeSettings,
+          mutateSettings: props.mutateSettings,
+        }),
+        h(ProviderCredentialsPage, props))
     }
 
     function QuotaPill({ useProjection, t }) {
@@ -1301,6 +1695,7 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
         h('span', { style: { color: TOKENS.textStrong, fontSize: 13, fontWeight: 500 } }, panelTitle(data, tr)),
         data?.stale ? h('span', { style: { color: TOKENS.textDim, fontSize: 11 } }, tr('stale')) : null),
         renderRows(),
+        h(QuotaHistory, { key: provider, provider, tr }),
         data?.updatedAt ? h('div', {
           style: {
             paddingTop: 8,
@@ -1353,8 +1748,46 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
 
     return {
       inject: ['slots', 'locale'],
+      __test: {
+        QuotaHistory,
+        normalizeHistoryRange,
+        requestDictionaries,
+        requestQuotaHistory,
+        createSettingsDraft,
+        settingsOperations,
+      },
       apply(ctx) {
-        ctx.effect(() => ctx.locale.register(NS, DICT), 'llm-quota: dictionary')
+        // Message dictionaries live in the bundle's `locale/*.json` and arrive
+        // through the Host i18n route. Registering after mount is safe: the
+        // locale service bumps its revision and slot-rendered copy updates
+        // without a remount. Transient failures retry until the dictionaries land.
+        ctx.effect(() => {
+          let disposed = false
+          let unregister = null
+          let retryTimer = null
+          const load = async () => {
+            let dictionaries
+            try {
+              dictionaries = await requestDictionaries()
+            } catch {
+              if (!disposed) retryTimer = setTimeout(() => { void load() }, RETRY_MS)
+              return
+            }
+            if (disposed) return
+            messages = dictionaries
+            try {
+              unregister = ctx.locale.register(NS, dictionaries)
+            } catch (error) {
+              console.error('llm-quota: dictionary registration failed:', error)
+            }
+          }
+          void load()
+          return () => {
+            disposed = true
+            if (retryTimer !== null) clearTimeout(retryTimer)
+            try { unregister?.() } catch {}
+          }
+        }, 'llm-quota: dictionary')
         ctx.effect(() => {
           let tr = fallbackTranslate
           try {
@@ -1371,7 +1804,7 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
         // Kept optional: the quota pill must keep working on a deployment that
         // mounts no credentials Remote. The page registers only while the
         // Plugins page declares its bundle-configuration slot.
-        ctx.inject(['slots', 'remote', 'remote.credentials'], (scope) => {
+        ctx.inject(['slots', 'remote', 'remote.credentials', 'remote.settings'], (scope) => {
           scope.slots.inject('plugins.bundle.config', () => scope.slots.register({
             name: 'plugins.bundle.config',
             key: PACKAGE,
@@ -1380,8 +1813,10 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
               describeCredentials: (refs) => scope.remote.credentials.describe(refs),
               writeCredential: (ref, value) => scope.remote.credentials.set(ref, value),
               removeCredential: (ref) => scope.remote.credentials.unset(ref),
+              describeSettings: () => scope.remote.settings.describe(),
+              mutateSettings: (ns, ops, revision) => scope.remote.settings.mutate(ns, ops, revision),
             }),
-          }, ProviderCredentialsPage))
+          }, PluginConfigPage))
         })
       },
     }
