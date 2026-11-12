@@ -234,13 +234,14 @@ test('collector does not overlap rounds', async () => {
   const ctx = { llm: { listProviders: () => [{ id: 'one' }] }, get: () => undefined }
   const collector = createHistoryCollector({
     ctx,
-    resolveRoute: (_ctx, provider) => ({ provider }),
+    resolveRoute: async (_ctx, provider) => ({ provider }),
     readRoute: () => {
       calls += 1
       return gate
     },
   })
   const first = collector.runOnce()
+  await Promise.resolve()
   const second = collector.runOnce()
   assert.strictEqual(first, second)
   assert.equal(calls, 1)
@@ -249,9 +250,19 @@ test('collector does not overlap rounds', async () => {
   assert.equal(calls, 1)
 })
 
-function createApiHarness() {
+function createApiHarness(options = {}) {
   const routes = new Map()
   const disposers = []
+  const providers = options.providers ?? {}
+  const keys = options.keys ?? {}
+  const directories = Object.entries(providers).map(([provider, source]) => ({
+    provider,
+    displayName: provider,
+    settingsNs: 'llm-pi-ai',
+    settingsPath: ['providers', provider],
+    defaultBaseURL: source.defaultBaseURL,
+    nativeAuth: { env: source.nativeEnv ?? [], oauth: source.oauth ?? false },
+  }))
   const ctx = {
     connection: {
       fetch: {
@@ -261,12 +272,22 @@ function createApiHarness() {
         },
       },
     },
-    credentials: { resolve: async () => undefined },
-    llm: {
-      listProviders: () => [],
-      listConfigurableProviders: () => [],
+    credentials: {
+      async resolve(name) {
+        const value = keys[name]
+        return typeof value === 'string' && value.length > 0 ? { value, source: 'test' } : undefined
+      },
     },
-    loader: { entries: () => [].values() },
+    llm: {
+      listProviders: () => Object.keys(providers).map((id) => ({ id, name: id })),
+      listConfigurableProviders: () => directories,
+    },
+    loader: {
+      entries: () => [{
+        options: { id: 'llm-pi-ai', name: '@deepseek-ai/dsh-llm-pi-ai' },
+        fiber: { state: 2, config: { providers: { get: () => providers } } },
+      }].values(),
+    },
     fiber: { restart: async () => {} },
     inject(names, callback) {
       return callback({ ...ctx, settings: { configure: () => () => {} } })
@@ -375,6 +396,44 @@ test('uses a custom history default range and falls back for invalid direct conf
   const fallbackData = await (await fallback.fetch(new Request('http://127.0.0.1/api/llm-quota/history?provider=custom'))).json()
   assert.equal(fallbackData.historyDefaultRange, '1h')
   assert.ok(Math.abs(before - Date.parse(fallbackData.since) - 3_600_000) < 1_000)
+})
+
+test('background collector records history through the Host resolveRoute wrapper', async (t) => {
+  const directory = await temporaryDirectory(t)
+  const previousHome = process.env.DSH_HOME
+  const previousFetch = globalThis.fetch
+  process.env.DSH_HOME = directory
+  const host = createApiHarness({
+    providers: { 'kimi-coding': { defaultBaseURL: 'https://api.kimi.com/coding', nativeEnv: ['KIMI_API_KEY'] } },
+    keys: { KIMI_API_KEY: 'collector-key' },
+  })
+  t.after(() => {
+    host.dispose()
+    globalThis.fetch = previousFetch
+    if (previousHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previousHome
+  })
+  const calls = []
+  globalThis.fetch = async (url) => {
+    calls.push(String(url))
+    return new Response(JSON.stringify({ usages: { limit_5h: { used_ratio: 0.25 }, limit_7d: { used_ratio: 0.5 } } }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+  apply(host.ctx, { history: true })
+
+  const historyRoute = host.routes.get('/api/llm-quota/history')
+  let data
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    data = await (await historyRoute.fetch(new Request('http://127.0.0.1/api/llm-quota/history?provider=kimi-coding&days=1'))).json()
+    if (data.points?.length > 0) break
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  assert.ok(calls.length > 0, 'collector should read the provider upstream')
+  assert.equal(data.ok, true)
+  assert.equal(data.points.length, 1, 'collector should persist one history point')
+  assert.equal(data.points[0].metrics.fiveHour, 75)
 })
 
 test('history storage failure does not block a successful quota response', async (t) => {

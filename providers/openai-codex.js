@@ -18,7 +18,7 @@
  * matching or an explicit `config.providers` override.
  */
 
-import { clampPercent, fetchJson, nowIso, resolveKey, toIso, unavailable } from './shared.js'
+import { clampPercent, toIso } from './shared.js'
 
 export const kind = 'openai-codex'
 export const hosts = {}
@@ -45,13 +45,26 @@ export function routeFor(baseURL) {
   return { endpoint: DEFAULT_ENDPOINT, keyNames: KEY_NAMES }
 }
 
-export async function read(ctx, route) {
-  const names = route.keyNames?.length ? route.keyNames : KEY_NAMES
-  const token = await resolveKey(ctx, names)
-  const accountId = await resolveKey(ctx, ACCOUNT_ID_NAMES)
-  if (!token || !accountId) return unavailable(route, 'missing-credential')
+export function route({ inference }) {
+  const match = routeFor(inference.baseURL)
+  return match ? { kind, ...match } : undefined
+}
 
-  const json = await fetchJson(route.endpoint ?? DEFAULT_ENDPOINT, {
+export const view = {
+  preset: 'plan', title: 'OpenAI Codex', errors: { 'missing-credential': { key: 'missingCodexToken' } },
+  credentials: [
+    { id: 'codex-token', refs: KEY_NAMES, label: { key: 'codexToken' }, hint: { key: 'codexTokenHint' }, placeholder: { key: 'codexTokenPlaceholder' } },
+    { id: 'codex-account', refs: ACCOUNT_ID_NAMES, label: { key: 'codexAccount' }, hint: { key: 'codexAccountHint' }, placeholder: { key: 'codexAccountPlaceholder' } },
+  ],
+}
+
+export async function read({ route, credentials, http, nowIso }, _route) {
+  const names = route.keyNames?.length ? route.keyNames : KEY_NAMES
+  const token = await credentials.resolve(names)
+  const accountId = await credentials.resolve(ACCOUNT_ID_NAMES)
+  if (!token || !accountId) return { reason: 'missing-credential' }
+
+  const json = await http.json(route.endpoint ?? DEFAULT_ENDPOINT, {
     headers: {
       Authorization: `Bearer ${token}`,
       'ChatGPT-Account-Id': accountId,

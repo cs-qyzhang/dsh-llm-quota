@@ -66,11 +66,11 @@ Baseten、Fireworks AI、Together AI 官方没有余额接口，插件显示的�
 
 因此，DSH 默认的 `zai-coding-cn` 会走 `open.bigmodel.cn`，而 `zai` 会走 `api.z.ai`。如果用户显式修改 `baseURL`，插件跟随修改后的已知主机，不复用旧端点缓存。
 
-少数适配器不靠静态主机映射，而是由 `resolve.js` 用 `routeFor` 按 URL 匹配：`opencode-go` 只认 `opencode.ai` 下的 `/zen/go` 路径（纯 `/zen` 是 Zen 预付费产品，不解析），`openai-codex` 只认 `chatgpt.com` 下含 `/backend-api` 的路径，`cloudflare` 认 `api.cloudflare.com` / `gateway.ai.cloudflare.com` / `*.workers.dev`（账户 ID 是按凭证的，静态映射表达不了），`github-copilot` 也接受任意 `*.githubcopilot.com` 主机。
+少数适配器不靠静态主机映射，而是在自己的 Provider 模块中实现可异步的 `route(context)`，按实时目录、profile 和 URL 匹配：`opencode-go` 只认 `opencode.ai` 下的 `/zen/go` 路径（纯 `/zen` 是 Zen 预付费产品，不解析），`openai-codex` 只认 `chatgpt.com` 下含 `/backend-api` 的路径，`cloudflare` 认 `api.cloudflare.com` / `gateway.ai.cloudflare.com` / `*.workers.dev`（账户 ID 是按凭证的，静态映射表达不了），`github-copilot` 也接受任意 `*.githubcopilot.com` 主机。部分模块内部的 `routeFor()` 只是该 Provider 的私有辅助函数，不是通用注册契约，新增供应商不应向 `resolve.js` 添加品牌分支。
 
 小米 MiMo 的主机（`api.xiaomimimo.com` 与 `token-plan-*.xiaomimimo.com`）不映射到推理 Key 的额度接口，而是统一走控制台 Cookie 适配器 `xiaomi-mimo`；阿里云百炼 Token Plan 的主机（`token-plan.*.maas.aliyuncs.com`）同样不能用推理 Key 查额度，改走控制台网关适配器 `qwen`。两者的细节见后文。
 
-OAuth-only 路由不再一概返回 `unsupported`：`anthropic` / `openai` / `github-copilot` / `openai-codex` / `cloudflare` / `opencode-go` 的额度走各自的专用凭证（Admin Key、GitHub Token、ChatGPT OAuth Token + Account ID、账户级 API Token + Account ID、OpenCode API Key），与路由的推理认证方式无关，凭证缺失时返回 `missing-credential` 而不是 `unsupported`。其余 OAuth-only 路由、未知代理、自托管地址和未激活 provider 均返回 `unsupported`，不会向上游发送凭证。自定义代理必须通过 `config.providers` 显式声明额度端点和凭证引用。
+OAuth-only 路由不再一概返回 `unsupported`。MiMo、Qwen、xAI、Anthropic、OpenAI、GitHub Copilot、OpenAI Codex、OpenCode Go、Cloudflare 和 DeepSeek 的专用 `route()` 默认可在 OAuth-only gate 之前尝试，以使用各自控制台或专用凭证；该行为由 `allowSpecialBeforeOAuth` 控制，可显式关闭。专用路由仍要求 DSH 中存在激活的目录和可用 profile，凭证缺失时返回适配器定义的缺失凭证原因。其余 OAuth-only 路由、未知代理、自托管地址和未激活 provider 均返回 `unsupported`，不会向上游发送凭证。自定义代理可通过 `config.providers` 显式声明额度端点和凭证引用；显式覆盖在该 gate 之前处理。
 
 ## DeepSeek 账号（按量计费）
 
@@ -116,7 +116,7 @@ Authorization: Bearer <实时 apiKeyEnv 对应的 Key>
 }
 ```
 
-插件读取 `balance_infos[0]` 的 `total_balance`，并保留 `is_available` 供展开面板显示状态。
+插件保留各钱包的 `total_balance`，优先选择 CNY 钱包，没有 CNY 时才取首个有效钱包；完全没有有效钱包会按临时失败处理。`is_available` 保留供展开面板显示状态。
 
 ## GLM Coding Plan
 
@@ -734,7 +734,7 @@ Authorization: Bearer <RADIUS_API_KEY>
 
 注意：
 
-- 状态行显示「余额 $X」，金额是响应币种的浮点数。
+- 状态行显示「余额 $X」，金额按响应币种格式化为两位小数；完整原始数值仍保留在响应中。
 - `ok` 非 `true`、组织列表为空或缺 `id`、`balance.available` / `current_period.actual_charged` 缺失都按临时失败处理。
 - `missing-credential` 是终态，客户端显示「未配置 API Key」。
 
@@ -743,7 +743,7 @@ Authorization: Bearer <RADIUS_API_KEY>
 Hugging Face 没有余额接口，插件读取 Hub 的账单用量接口（`usage-v2`），按当前 UTC 自然月汇总已产生费用。凭证引用默认 `HF_TOKEN`，兼容 `HUGGINGFACE_TOKEN`：
 
 ```http
-GET https://huggingface.co/api/settings/billing/usage-v2?startDate=<月初 Unix 秒>&endDate=<次月 Unix 秒>
+GET https://huggingface.co/api/settings/billing/usage-v2?startDate=<UTC 月初 Unix 秒>&endDate=<当前日期次日 00:00 UTC 的 Unix 秒>
 Authorization: Bearer <HF_TOKEN>
 ```
 
@@ -758,7 +758,7 @@ Authorization: Bearer <HF_TOKEN>
 
 注意：
 
-- 状态行显示「本月已用 $X」；行内只有计数没有金额时返回 `usageOnly: true`，状态行降级为「本月已用 N 次」（请求数），不虚构金额。
+- 状态行显示「本月已用 $X」；行内只有计数没有金额时返回 `usageOnly: true`，其中存在有限数值 `requestCount` 时状态行降级为「本月已用 N 次」，不虚构金额。仅有 token 计数不会自动显示为请求次数。
 - 金额字段只出现一个就按其口径换算，多个同时出现会叠加求和。
 - 行结构或字段完全无法识别时按临时失败处理。
 
@@ -844,7 +844,7 @@ Authorization: Bearer <GitHub Token>
 Anthropic 没有余额接口，插件读取 Admin API 的成本报表，显示当前 UTC 自然月已产生费用。需要组织 **Admin API Key**（`sk-ant-admin…`，Claude Console → Settings → Admin Keys 创建），Messages 用的推理 Key 不能查询；凭证引用默认 `ANTHROPIC_ADMIN_KEY`，兼容 `ANTHROPIC_ADMIN_API_KEY`：
 
 ```http
-GET https://api.anthropic.com/v1/organizations/cost_report?starting_at=<月初>&ending_at=<次月>&bucket_width=1d
+GET https://api.anthropic.com/v1/organizations/cost_report?starting_at=<UTC 月初>&ending_at=<当前日期次日 00:00 UTC>&bucket_width=1d
 x-api-key: <Admin Key>
 anthropic-version: 2023-06-01
 ```
@@ -874,7 +874,7 @@ anthropic-version: 2023-06-01
 插件会附带请求用量报表补充 token 统计（失败只丢弃附加信息，不影响本月已用）：
 
 ```http
-GET https://api.anthropic.com/v1/organizations/usage_report/messages?starting_at=<月初>&ending_at=<次月>&bucket_width=1d
+GET https://api.anthropic.com/v1/organizations/usage_report/messages?starting_at=<UTC 月初>&ending_at=<当前日期次日 00:00 UTC>&bucket_width=1d
 ```
 
 其 `results` 行的 `uncached_input_tokens`、`cache_read_input_tokens`、`cache_creation.ephemeral_5m_input_tokens`、`cache_creation.ephemeral_1h_input_tokens` 计入输入，`output_tokens` 计入输出。
@@ -882,7 +882,7 @@ GET https://api.anthropic.com/v1/organizations/usage_report/messages?starting_at
 注意：
 
 - 状态行显示「本月已用 $X」，不是余额；报表数据比实时用量滞后约 5 分钟。
-- 报表按 `bucket_width=1d` 分桶，插件把 `data[].results` 展平求和（也兼容顶层 `results`）。
+- 报表按 `bucket_width=1d` 分桶，插件把 `data[].results` 展平求和（也兼容顶层 `results`）；分页最多 100 页，游标异常或达到上限按临时失败处理。
 - 凭证缺失返回 `missing-credential`，客户端显示「未配置 Admin Key」。
 
 ## OpenAI（本月已用）
@@ -890,7 +890,7 @@ GET https://api.anthropic.com/v1/organizations/usage_report/messages?starting_at
 OpenAI 同样没有余额接口，插件读取 Organization Costs API，显示当前 UTC 自然月已产生费用。需要 **Admin API Key**（`sk-admin…`，platform.openai.com → Admin keys 创建，仅组织 Owner 可建），Responses / Chat 用的推理 Key 不能查询；凭证引用默认 `OPENAI_ADMIN_KEY`，兼容 `OPENAI_ADMIN_API_KEY`：
 
 ```http
-GET https://api.openai.com/v1/organization/costs?start_time=<月初 Unix 秒>&end_time=<次月 Unix 秒>&bucket_width=1d
+GET https://api.openai.com/v1/organization/costs?start_time=<UTC 月初 Unix 秒>&end_time=<当前日期次日 00:00 UTC 的 Unix 秒>&bucket_width=1d
 Authorization: Bearer <Admin Key>
 ```
 
@@ -912,12 +912,12 @@ Authorization: Bearer <Admin Key>
 | 字段 | 含义 |
 | --- | --- |
 | `results[].amount.value` | 该行费用（USD 小数），全部行求和作为「本月已用」 |
-| `has_more` / `next_page` | 分页游标；插件跟随 `next_page` 继续请求，最多 5 页 |
+| `has_more` / `next_page` | 分页游标；插件跟随 `next_page` 继续请求，最多 100 页；游标缺失、重复或达到上限时按临时失败处理，避免静默展示不完整成本 |
 
 插件会附带请求用量接口补充统计（失败只丢弃附加信息）：
 
 ```http
-GET https://api.openai.com/v1/organization/usage/completions?start_time=<月初 Unix 秒>&end_time=<次月 Unix 秒>&bucket_width=1d
+GET https://api.openai.com/v1/organization/usage/completions?start_time=<UTC 月初 Unix 秒>&end_time=<当前日期次日 00:00 UTC 的 Unix 秒>&bucket_width=1d
 ```
 
 其 `results` 行的 `input_tokens` / `output_tokens` / `num_model_requests` 累加为输入 / 输出 Tokens 与请求数。
@@ -937,7 +937,7 @@ Authorization: Bearer <账户级 API Token>
 ```
 
 ```http
-GET https://api.cloudflare.com/client/v4/accounts/<account_id>/ai-gateway/billing/usage-history?value_grouping_window=day&start_time=<月初毫秒>&end_time=<次月毫秒>
+GET https://api.cloudflare.com/client/v4/accounts/<account_id>/ai-gateway/billing/usage-history?value_grouping_window=day&start_time=<UTC 月初毫秒>&end_time=<当前日期次日 00:00 UTC 的毫秒>
 Authorization: Bearer <账户级 API Token>
 ```
 
@@ -1044,37 +1044,116 @@ ChatGPT-Account-Id: <account_id>
 
 ### 接入新的额度体系
 
-供应商兼容代码集中在 `providers/` 目录：
+每个 Provider 在单个模块中声明路由、读取和展示；`client.js` 不含供应商分支。内置模块从 `providers/index.js` 的 `builtinProviders()` 注册，独立模块通过 `providerModules` 加载。独立模块可直接使用公开子路径导入：
 
-| 文件 | 职责 |
-| --- | --- |
-| `providers/index.js` | 适配器注册表：主机 → 端点映射、按 `kind` 分发 `readQuota` |
-| `providers/resolve.js` | 从 DSH 实时配置解析 provider 的凭证引用与 `baseURL` |
-| `providers/shared.js` | 凭证读取、上游 HTTP、缓存指纹与统一响应片段 |
-| `providers/<kind>.js` | 单个额度体系的解析逻辑 |
+#### 完整独立 ESM 示例
 
-接入步骤：
+```js
+// acme-provider.mjs
+import { defineProvider } from '@cs-qyzhang/dsh-llm-quota/provider'
 
-1. 在 `providers/` 新建适配器模块，导出 `kind`、`hosts`（已知 HTTPS 主机 → 固定额度端点，没有则用空对象）和 `read(ctx, route)`；需要按 URL 路径或主机族匹配时再导出 `routeFor(baseURL)`（如 `opencode-go`、`openai-codex`、`cloudflare`）。
-2. 在 `providers/index.js` 的 `ADAPTERS` 数组注册该模块。
-3. 如果新供应商的凭证引用或 `baseURL` 来自新的 DSH 插件，或需要 `routeFor` 路由，在 `providers/resolve.js` 增加一个分支。
-4. 让新适配器返回统一结构：
+export default defineProvider({
+  kind: 'acme',
+  view: {
+    preset: 'balance',
+    title: { key: 'acmeTitle' },
+    errors: { 'missing-credential': { key: 'acmeMissingKey' } },
+    credentials: [{
+      id: 'acme-key',
+      refs: ['ACME_API_KEY'],
+      label: 'Acme API key',
+      hint: 'Used to read the Acme balance.',
+      placeholder: 'ACME_API_KEY',
+    }],
+    history: [{
+      key: 'amount', path: 'amount', unit: 'currency',
+      label: { key: 'metricAmount' },
+    }],
+    messages: {
+      en: { acmeTitle: 'Acme', acmeMissingKey: 'Configure an Acme API key.' },
+      zh: { acmeTitle: 'Acme', acmeMissingKey: '请配置 Acme API Key。' },
+    },
+  },
 
-```json
-{
-  "ok": true,
-  "provider": "<route>",
-  "kind": "<kind>",
-  "fiveHour": { "usedPercent": 0, "remainingPercent": 100, "resetAt": "<ISO>" },
-  "weekly": { "usedPercent": 0, "remainingPercent": 100, "resetAt": "<ISO>" },
-  "updatedAt": "<ISO>"
-}
+  // 可选；不写 route() 时也可声明 hosts 做静态 HTTPS 主机映射。
+  route({ inference }) {
+    let url
+    try {
+      url = new URL(inference.baseURL)
+    } catch {
+      return undefined
+    }
+    if (url.protocol !== 'https:' || url.username || url.password || url.hostname !== 'api.acme.example') {
+      return undefined
+    }
+    return {
+      endpoint: 'https://api.acme.example/v1/quota',
+      keyNames: inference.keyNames.length ? inference.keyNames : ['ACME_API_KEY'],
+    }
+  },
+
+  async read({ route, credentials, http }) {
+    const key = await credentials.resolve(route.keyNames)
+    if (!key) return { reason: 'missing-credential' }
+    const data = await http.json(route.endpoint, {
+      headers: { Authorization: `Bearer ${key}` },
+    })
+    return { currency: 'USD', amount: String(data.balance) }
+  },
+})
 ```
 
-余额型则返回 `kind: "balance"`、`currency`、`amount`、`wallets`、`bonusWallets`。
+在「运行配置 → 自定义 Provider 模块」中保存模块说明符，例如：
 
-5. 如果新类型需要不同的状态行文案，在 `client.js` 的 `compactLabel` / `panelTitle` 中增加分支和 `zh` / `en` 字典键。
-6. 更新根目录 README 的支持范围表与本文档。
+```json
+["./providers/acme-provider.mjs"]
+```
+
+上例的相对路径按 **Host 进程工作目录**解析，不是按插件配置文件的目录解析。也可使用 npm 包说明符或绝对路径。保存会重启 Host 并重新注册模块；刷新已打开的页面以获取新的展示、文案、凭证和历史 manifest。
+
+#### Provider 字段与运行时上下文
+
+`defineProvider()` 实际强制校验：输入必须是对象、`kind` 必须是非空字符串、`read()` 必须是函数，`services` 若提供必须是字符串数组。它不会完整验证 `view`、`hosts` 或 `present()` 的返回值，模块作者必须遵守下述约定。
+
+| 字段 | 必需 | 说明 |
+| --- | --- | --- |
+| `kind` | 是 | 注册身份，同时作为响应 `viewId`；重复注册会报错 |
+| `read(context)` | 是 | 读取额度并返回非数组对象；异常由 Host 按临时失败处理 |
+| `hosts` | 否 | `{ 推理 hostname: 额度 endpoint }`，主机重复会报错；通用映射只接受无用户名密码的 HTTPS baseURL |
+| `route(context)` | 否 | 可异步，按实时配置返回 route；在普通 `hosts` 映射前按 registry 顺序执行 |
+| `matchProvider(provider)` | 否 | 按 provider id 直接匹配，发生在 DSH 激活目录查询前 |
+| `normalizeOverride({ override, provider })` | 否 | 规范化显式 `config.providers` 项，例如补默认凭证名或 mode |
+| `services` | 否 | `read()` 所需的 Host 服务名数组；不会把完整 Cordis ctx 传给普通 Provider |
+| `allowSpecialBeforeOAuth` | 否 | 默认等于是否定义了 `route()`；控制 OAuth-only 路由能否先尝试专用适配器 |
+| `view` | 否 | 静态展示、错误、凭证、历史和文案声明 |
+| `present(data, helpers)` | 否 | Host 上生成纯数据 ViewModel，覆盖动态标题、行、compact、badge、gauge 或错误 |
+
+`route()` 收到 `{ provider, directory, profile, inference, services }`。`inference` 只包含 `baseURL`、`keyNames`、`oauth`；当前通用解析器向 route context 提供 `launchEnvironment` 服务。返回 route 可省略 `kind/provider`，由当前 Provider 和查询补齐；`endpoint`、`keyNames` 的含义由 Provider 自己的 `read()` 决定。
+
+`read()` 收到：
+
+- `route`：已生成 `cacheKey` 的完整路由；缓存指纹只包含 `provider/kind/endpoint/mode/keyNames`，自定义扩展字段若影响额度身份，应由 Provider 纳入这些字段。
+- `credentials.resolve(names)`：按候选引用顺序解析非空秘密字符串。
+- `http.json(url, init)`：共享 JSON 请求，自动传入超时/取消信号；非 2xx 或 JSON 解析失败会抛错。
+- `services`：仅顶层声明的服务；`signal`：当前 `AbortSignal`；`nowIso`：ISO 时间函数。
+
+返回数据的 `reason !== undefined` 或显式 `ok: false` 都表示失败，失败不会缓存或写历史。包装层强制覆盖 `provider` 和 `updatedAt`，数据 `kind` 可覆盖注册 `kind`（例如 `balance`），并附加 `viewId: <注册 kind>` 和 `view`。凭证值不会出现在 manifest 或公开失败 route 中。
+
+#### 展示、文案与历史
+
+`view.preset` 可选 `balance | credits | usage | plan`。静态 `view` 与 preset 浅合并，可声明 `title`、`compact`、`badge`、`rows`、`gauge`、`errors`、`credentials`、`history`、`messages`。`present()` 的 helpers 提供 `message`、`formatAmount`、`formatNumber`、`formatWindow`、`resetLabel`、`row`；输出必须是可序列化纯数据，文案使用 `{ key, params }`，不能依赖在浏览器执行函数或 React 组件。
+
+`credentials` 项包含稳定的 `id`、候选 `refs` 及配置页文案，manifest 按 `id` 首次出现去重。`messages` 按语言全局合并，并不会自动按 Provider 命名空间隔离，因此 key 应保持唯一；通用键可来自 `locale/*.json`，专属键可随 Provider 提供，缺失语言回退英文。
+
+`history` 是实际采集声明，每项为 `{ key, path, unit, label }`，`unit` 当前为 `currency` 或 `percent`。preset 提供默认指标：balance 为 `amount/cycleUsage`，credits 为 `amount`，usage 为 `usedAmount`，plan 为 `fiveHour/weekly/monthly`。Provider 自己声明 `history` 会**替换** preset 数组；没有 preset 且未声明 history 的 Provider 不写历史点。manifest 的 `history` 与 `historyPriority` 同时驱动图表标签和默认曲线。
+
+#### 模块加载与内置接入
+
+动态导入依次选择模块的 `default ?? providers ?? provider` 导出，值可为单个 Provider 或 Provider 数组；未预先调用 `defineProvider()` 的普通对象会在注册时包装。重复 `kind`、重复 `hosts` hostname、无效模块或无效 Provider 会使 registry 进入 `readyError`，`/api/llm-quota/views` 返回 `ok: false, reason: 'error'`；不会把它描述成静默跳过坏模块。
+
+自定义模块是 Host 上运行的**受信任任意 ESM 代码**，不是安全沙箱。受限 `read()` 上下文只减少常规适配器对 Cordis 的依赖，并不限制模块本身的 Node.js 能力。浏览器只接收可序列化 manifest/ViewModel，不执行第三方前端代码。
+
+若将新 Provider 收入本插件内置版本，则在 `providers/` 新建模块并在 `providers/index.js` 的 `builtinProviders()` 中按路由优先级登记；展示和历史都放在该模块，不向 `resolve.js` 或 `client.js` 添加品牌分支。公开入口 `@cs-qyzhang/dsh-llm-quota/provider` 还导出 `resolveKey`、`fetchJson`、金额/钱包/时间工具和 `providerFailure` 等共享辅助，来源见 `provider.js`。
 
 ## 接口稳定性
 
@@ -1088,4 +1167,4 @@ ChatGPT-Account-Id: <account_id>
 - Anthropic / OpenAI 的用量走 Admin API（成本 / 用量报表），需要 Admin Key（`sk-ant-admin…` / `sk-admin…`），报表数据比实时用量略有滞后，Anthropic 的 `amount` 是 USD 美分。
 - GitHub Copilot 的 `copilot_internal/user` 与 OpenAI Codex 的 `chatgpt.com/backend-api/wham/usage` 都是非公开内部接口（后者从 openai/codex 源码逆向），字段或可用性可能随时变化，需按临时失败容错。
 - Radius 的组织 / 账单接口与 Cloudflare 的 AI Gateway 计费接口需要各自的专用凭证（组织级 API Key、账户级 API Token + Account ID），与推理凭证分开管理。
-- Loader 实时配置读取与 manifest 兼容声明当前针对 DSH `0.2.1-rc.2` 与 `0.2.1-rc.3`，升级后需重新核对配置结构。
+- 包声明支持 DSH `>=0.2.1-rc.2 <0.2.2 || >=0.2.2-0 <0.2.3`；Loader 优先读取 `fiber.effectiveConfig`，回退 `fiber.config`。该范围不等同于每个版本均已完成真实浏览器验证，升级后需重新核对目录、配置结构和 manifest 行为。

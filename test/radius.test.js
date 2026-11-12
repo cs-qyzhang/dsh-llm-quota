@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import * as radius from '../providers/radius.js'
+import { readProvider } from './provider-test.js'
+const read = (ctx, route) => readProvider(radius, ctx, route)
 
 const ROUTE = {
   provider: 'radius',
@@ -77,7 +79,7 @@ test('reads the Radius billing balance and current-period spend', async (t) => {
     count === 1 ? json(ORGANIZATIONS_RESPONSE) : json(BILLING_RESPONSE)
   ))
 
-  const result = await radius.read(createCtx({ RADIUS_API_KEY: 'radius-key' }), ROUTE)
+  const result = await read(createCtx({ RADIUS_API_KEY: 'radius-key' }), ROUTE)
   assert.equal(result.ok, true)
   assert.equal(result.provider, 'radius')
   assert.equal(result.kind, 'balance')
@@ -97,7 +99,7 @@ test('discovers the organization before reading billing', async (t) => {
     count === 1 ? json(ORGANIZATIONS_RESPONSE) : json(BILLING_RESPONSE)
   ))
 
-  await radius.read(createCtx({ RADIUS_API_KEY: 'radius-key' }), ROUTE)
+  await read(createCtx({ RADIUS_API_KEY: 'radius-key' }), ROUTE)
   assert.deepEqual(calls.map((call) => call.url), [
     'https://radius.pi.dev/v1/organizations',
     'https://radius.pi.dev/v1/organizations/org-1/billing',
@@ -107,7 +109,7 @@ test('discovers the organization before reading billing', async (t) => {
 test('reports a missing Radius key without calling upstream', async (t) => {
   const calls = mockFetch(t, async () => json(BILLING_RESPONSE))
 
-  const result = await radius.read(createCtx({}), ROUTE)
+  const result = await read(createCtx({}), ROUTE)
   assert.equal(result.ok, false)
   assert.equal(result.reason, 'missing-credential')
   assert.equal(calls.length, 0)
@@ -119,7 +121,7 @@ test('rejects invalid Radius payloads as temporary errors', async (t) => {
   ))
 
   await assert.rejects(
-    radius.read(createCtx({ RADIUS_API_KEY: 'radius-key' }), ROUTE),
+    read(createCtx({ RADIUS_API_KEY: 'radius-key' }), ROUTE),
     { message: 'invalid quota response' },
   )
 })

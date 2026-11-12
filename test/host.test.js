@@ -787,6 +787,28 @@ test('returns the last successful balance as stale after a timeout', async (t) =
   assert.equal(stale.stale, true)
 })
 
+test('aborts a hanging response body at the Host deadline', async (t) => {
+  const host = createHarness({
+    providers: { 'kimi-coding': { defaultBaseURL: 'https://api.kimi.com/coding', nativeEnv: ['KIMI_API_KEY'] } },
+    keys: { KIMI_API_KEY: 'kimi-key' },
+    config: { cacheSeconds: 0 },
+  })
+  t.after(host.dispose)
+  let signal
+  mockFetch(t, async (_url, init) => {
+    signal = init.signal
+    return { ok: true, status: 200, text: () => new Promise(() => {}) }
+  })
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const request = host.request('kimi-coding')
+  await new Promise((resolve) => setImmediate(resolve))
+  t.mock.timers.tick(5_000)
+  const result = await body(await request)
+  assert.equal(result.ok, false)
+  assert.equal(result.reason, 'error')
+  assert.equal(signal.aborted, true)
+})
+
 test('normalizes numeric wallet balances', async (t) => {
   const host = createHarness({
     account: {

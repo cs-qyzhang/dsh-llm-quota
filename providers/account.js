@@ -3,25 +3,32 @@
  * this adapter has no endpoint, host mapping, or API key reference.
  */
 
-import { nowIso, toWallets, unavailable } from './shared.js'
+import { abortable, nowIso, toWallets, unavailable } from './shared.js'
 
 const ACCOUNT_CLIENT_VERSION = '0.2.1-rc.2'
 
 export const kind = 'account'
 export const hosts = {}
 
-export async function read(ctx, route) {
-  const account = ctx.get('deepseekAccount')
+export const services = ['deepseekAccount']
+export const view = { preset: 'balance', title: { key: 'balanceTitle' }, errors: { 'signed-out': { key: 'signedOut' } } }
+
+export function matchProvider(provider) {
+  return provider === 'deepseek-account'
+}
+
+export async function read({ route, services, signal }) {
+  const account = services.deepseekAccount
   if (!account) return unavailable(route, 'unavailable')
 
-  const view = await account.getState()
+  const view = await abortable(account.getState(), signal)
   if (!view || view.status === 'signed-out') return unavailable(route, 'signed-out')
 
-  const details = await account.getBalance({
+  const details = await abortable(account.getBalance({
     version: ACCOUNT_CLIENT_VERSION,
     locale: 'zh_CN',
     timezoneOffsetSeconds: -new Date().getTimezoneOffset() * 60,
-  })
+  }), signal)
   if (!details) return unavailable(route, 'signed-out')
   if (details.status !== 'ready') throw new Error('account balance unavailable')
 

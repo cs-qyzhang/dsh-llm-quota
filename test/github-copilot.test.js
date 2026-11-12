@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { KEY_NAMES, read } from '../providers/github-copilot.js'
+import * as adapter from '../providers/github-copilot.js'
+import { readProvider } from './provider-test.js'
+const { KEY_NAMES } = adapter
+const read = (ctx, route) => readProvider(adapter, ctx, route)
 
 const ROUTE = { provider: 'github', kind: 'github-copilot' }
 

@@ -14,13 +14,13 @@ Displays the current model provider's remaining balance or Coding Plan quota in 
 - **多处展示**：覆盖状态行、模型菜单和「当前模型」标签，点击状态行可查看详情。
 - **历史趋势**：后台定时采集，在详情浮层展示额度变化，无需保持会话页面打开。
 - **多供应商**：支持 DeepSeek、GLM、Kimi、MiniMax、OpenAI、OpenRouter 等主流服务。
-- **可扩展**：支持自定义 provider 路由和适配器配置，可接入代理或私有部署。
+- **可扩展**：支持自定义 provider 路由，也可通过 `providerModules` 加载受信任的 Host ESM Provider，接入代理、私有部署或新的额度体系。
 
 - **Real-time quotas**: Displays remaining balance, current month's usage, or the remaining percentage and reset time for 5-hour / weekly quotas.
 - **Multiple locations**: Available in the status line, model menu, and “Current Model” label. Click the status line entry to view details.
 - **Historical trends**: Collects data periodically in the background and displays changes in the detail popup, without keeping the session page open.
 - **Multiple providers**: Supports DeepSeek, GLM, Kimi, MiniMax, OpenAI, OpenRouter, and other popular services.
-- **Extensible**: Supports custom provider routes and adapter configurations for proxies or private deployments.
+- **Extensible**: Supports custom provider routes and trusted Host ESM Providers loaded through `providerModules`, for proxies, private deployments, or new quota systems.
 
 ## 界面预览 / Preview
 
@@ -30,9 +30,9 @@ Displays the current model provider's remaining balance or Coding Plan quota in 
 
 ## 安装与更新 / Installation and Updates
 
-要求 Node.js `>=22.13.0`。
+要求 Node.js `>=22.13.0`，dsh `>=0.2.1-rc.2 <0.2.2 || >=0.2.2-0 <0.2.3`。Node.js 下限用于无需额外启动参数运行历史存储使用的 `node:sqlite`。
 
-Requires Node.js `>=22.13.0`.
+Requires Node.js `>=22.13.0` and dsh `>=0.2.1-rc.2 <0.2.2 || >=0.2.2-0 <0.2.3`. The Node.js minimum allows the `node:sqlite` history store to run without extra startup flags.
 
 ```bash
 dsh plugin --profile web add @cs-qyzhang/dsh-llm-quota@latest
@@ -61,23 +61,25 @@ Restart dsh or refresh the page after uninstalling.
 The plugin automatically queries quota based on the current model's provider. For complete provider IDs, supported scope, and credential requirements, see the [provider documentation](docs/providers.md#支持的额度体系) and [DSH provider list](docs/dsh-providers.md).
 
 - **凭证**：默认复用 dsh 中已有的推理凭证。需要额外控制台凭证的供应商，可在 **Plugins → Installed plugins → 模型额度 → 供应商额外凭证** 中配置；各供应商的具体要求见[供应商文档](docs/providers.md)。
-- **高级配置**：在 **Plugins → Installed plugins → 模型额度** 的「运行配置」中可调整 `cacheSeconds`、`history`、`historyDefaultRange`、`historyIntervalSeconds`，并用 JSON 编辑 `providers`；保存后立即生效。`historyDefaultRange` 控制历史浮层的初始范围，默认近 1 小时，可选近 1 / 4 / 12 / 24 小时、7 天或 30 天；保存后重新打开浮层生效。自定义路由字段与手工 YAML 示例见[自定义 provider](docs/providers.md#自定义或增加-provider)。
-- **历史数据**：默认每 30 秒采集一次，仅在额度变化时写入本地 SQLite。存储路径、保留策略、抽样和趋势图说明见[架构文档](docs/architecture.md#历史采集与持久化)。
+- **高级配置**：在 **Plugins → Installed plugins → 模型额度** 的「运行配置」中可调整 `cacheSeconds`、`history`、`historyDefaultRange`、`historyIntervalSeconds`，并用 JSON 编辑 `providers` 与 `providerModules`。保存会重建 Host 的路由、缓存与采集器；新增或修改自定义 Provider 的展示、文案或凭证字段后，需刷新已打开的页面以重新获取 manifest。`historyDefaultRange` 默认近 1 小时，可选近 1 / 4 / 12 / 24 小时、7 天或 30 天，重新打开浮层生效。自定义模块与手工 YAML 示例见[接入新的额度体系](docs/providers.md#接入新的额度体系)。
+- **历史数据**：默认每 30 秒采集一次，仅在 Provider 声明的额度指标变化时写入本地 SQLite。关闭 `history` 会同时停止采集、写入并移除历史查询路由。存储路径、保留策略、抽样和趋势图说明见[架构文档](docs/architecture.md#历史采集与持久化)。
 
 - **Credentials**: Reuses inference credentials already configured in dsh by default. For providers that require additional console credentials, configure them in the plugin's additional provider credentials section. See the [provider documentation](docs/providers.md) for provider-specific requirements.
-- **Advanced configuration**: Under **Plugins → Installed plugins → Model quota**, the Runtime settings section exposes `cacheSeconds`, `history`, `historyDefaultRange`, `historyIntervalSeconds`, and a JSON editor for `providers`; changes apply immediately after saving. `historyDefaultRange` sets the initial history popup range: the last 1 hour by default, with options for the last 1 / 4 / 12 / 24 hours, 7 days, or 30 days. Reopen the popup after saving to apply it. See [custom providers](docs/providers.md#自定义或增加-provider) for route fields and manual YAML examples.
-- **Historical data**: Collects data every 30 seconds by default and writes to local SQLite only when quota changes. See the [architecture documentation](docs/architecture.md#历史采集与持久化) for the storage path, retention policy, sampling, and trend charts.
+- **Advanced configuration**: Under **Plugins → Installed plugins → Model quota**, Runtime settings exposes `cacheSeconds`, `history`, `historyDefaultRange`, `historyIntervalSeconds`, and JSON editors for `providers` and `providerModules`. Saving rebuilds the Host routes, cache, and collector; refresh an already-open page after changing a custom Provider's view, messages, or credential declarations so the Client fetches the new manifest. `historyDefaultRange` defaults to the last 1 hour, with options for the last 1 / 4 / 12 / 24 hours, 7 days, or 30 days; reopen the popup to apply it. See [adding a quota system](docs/providers.md#接入新的额度体系) for custom modules and manual YAML examples.
+- **Historical data**: Collects every 30 seconds by default and writes to local SQLite only when a Provider-declared quota metric changes. Disabling `history` stops collection and persistence and removes the history query route. See the [architecture documentation](docs/architecture.md#历史采集与持久化) for the storage path, retention policy, sampling, and trend charts.
 
 ## HTTP 接口 / HTTP API
 
 ```text
 GET /api/llm-quota?provider=<provider id>
 GET /api/llm-quota/history?provider=<provider id>&days=7
+GET /api/llm-quota/i18n
+GET /api/llm-quota/views
 ```
 
-接口需要 dsh 登录认证。完整查询参数、响应示例和失败原因见[架构文档](docs/architecture.md#响应形状)。
+接口均需要 dsh 登录认证；`/history` 仅在启用历史时注册，`/i18n` 和 `/views` 主要供 Client 初始化使用。完整查询参数、响应示例和失败原因见[架构文档](docs/architecture.md#响应形状)。
 
-Both endpoints require dsh authentication. See the [architecture documentation](docs/architecture.md#响应形状) for complete query parameters, response examples, and failure reasons.
+All endpoints require dsh authentication. `/history` is registered only when history is enabled; `/i18n` and `/views` primarily support Client initialization. See the [architecture documentation](docs/architecture.md#响应形状) for complete query parameters, response examples, and failure reasons.
 
 ## 故障排查与开发 / Troubleshooting and Development
 
@@ -86,8 +88,8 @@ Both endpoints require dsh authentication. See the [architecture documentation](
 For common errors and their causes, see [failure reasons](docs/architecture.md#失败原因). For local startup, browser verification, and reload behavior after changes, see [local development and verification](docs/architecture.md#本地开发与验证).
 
 ```bash
-# 语法检查与 Host 回归测试（不访问真实供应商）
-# Syntax checks and Host regression tests (no real provider requests)
+# 语法检查与自动化回归测试（不访问真实供应商）
+# Syntax checks and automated regression tests (no real provider requests)
 npm run check
 npm test
 ```

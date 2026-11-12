@@ -25,7 +25,7 @@
     "url": "https://github.com/cs-qyzhang/dsh-llm-quota/issues"
   },
   "scripts": {
-    "check": "node --check index.js && node --check history.js && node --check client.js && node -e \"const{readdirSync}=require('node:fs');const{execFileSync}=require('node:child_process');for(const f of readdirSync('providers'))execFileSync(process.execPath,['--check','providers/'+f],{stdio:'inherit'})\"",
+    "check": "node --check index.js && node --check history.js && node --check provider.js && node --check client.js && node -e \"const{readdirSync}=require('node:fs');const{execFileSync}=require('node:child_process');for(const f of readdirSync('providers'))execFileSync(process.execPath,['--check','providers/'+f],{stdio:'inherit'})\"",
     "test": "node --test test/host.test.js test/*.test.js"
   },
   "dependencies": {
@@ -38,6 +38,7 @@
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
+    "./provider": "./provider.js",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
@@ -45,6 +46,7 @@
     "index.js",
     "history.js",
     "client.js",
+    "provider.js",
     "providers/*.js",
     "cordis.patch.yml",
     "locale/*.json",

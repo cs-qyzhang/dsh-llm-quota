@@ -11,7 +11,8 @@
  * PAT with `Plan: read`), which is intentionally not implemented yet.
  */
 
-import { clampPercent, fetchJson, nowIso, resolveKey, toIso, unavailable } from './shared.js'
+import { clampPercent, toIso } from './shared.js'
+import { mergeNames, planView } from './view-helpers.js'
 
 export const kind = 'github-copilot'
 export const DEFAULT_ENDPOINT = 'https://api.github.com/copilot_internal/user'
@@ -37,12 +38,32 @@ export function routeFor(baseURL) {
   }
 }
 
-export async function read(ctx, route) {
-  const names = Array.isArray(route.keyNames) && route.keyNames.length > 0 ? route.keyNames : KEY_NAMES
-  const token = await resolveKey(ctx, names)
-  if (!token) return unavailable(route, 'missing-credential')
+export const view = {
+  preset: 'plan', title: 'GitHub Copilot', errors: { 'missing-credential': { key: 'missingGitHubToken' } },
+  credentials: [{ id: 'github-token', refs: KEY_NAMES, label: { key: 'githubToken' }, hint: { key: 'githubTokenHint' }, placeholder: { key: 'githubTokenPlaceholder' } }],
+  history: [{ key: 'plan', path: 'plan.remainingPercent', unit: 'percent', label: { key: 'metricPlan' } }, { key: 'chat', path: 'chat.remainingPercent', unit: 'percent', label: { key: 'copilotChat' } }],
+}
 
-  const json = await fetchJson(route.endpoint ?? DEFAULT_ENDPOINT, {
+export function route({ inference }) {
+  const match = routeFor(inference.baseURL)
+  return match ? { kind, ...match, keyNames: mergeNames(KEY_NAMES, inference.keyNames) } : undefined
+}
+
+export function present(data, helpers) {
+  const result = planView(data, helpers, { compact: 'planLeft', label: 'copilotPremium' })
+  if (data.chat && Number.isFinite(data.chat.remainingPercent)) {
+    result.rows.push(helpers.row('copilotChat', helpers.message('remaining', { percent: data.chat.remainingPercent })))
+  }
+  result.title = data.planName ? `GitHub Copilot · ${data.planName}` : 'GitHub Copilot'
+  return result
+}
+
+export async function read({ route, credentials, http, nowIso }, _route) {
+  const names = Array.isArray(route.keyNames) && route.keyNames.length > 0 ? route.keyNames : KEY_NAMES
+  const token = await credentials.resolve(names)
+  if (!token) return { reason: 'missing-credential' }
+
+  const json = await http.json(route.endpoint ?? DEFAULT_ENDPOINT, {
     headers: {
       Accept: 'application/json',
       'User-Agent': 'GitHubCopilotChat/1.0',

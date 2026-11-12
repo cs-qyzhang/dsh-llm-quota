@@ -48,10 +48,10 @@
 
 补充说明：
 
-- `deepseek` 是 pi-ai 目录路由，`deepseek-official` 是 DeepSeek 直连路由，两者都落在 `api.deepseek.com`，共用同一个余额适配器。
+- `deepseek` 是 pi-ai 目录路由，`deepseek-official` 是 DeepSeek 直连路由，两者共用余额适配器。`deepseek-official` 由 Provider 的专用 `route()` 处理，支持实时 baseURL 和 `DEEPSEEK_BASE_URL`；pi-ai 路由通常经已知 HTTPS 主机映射命中。
 - 上表按「推理主机命中已知映射」生效：把 `baseURL` 显式改成其它已知主机时，插件跟随修改后的主机（例如 `zai` 改指 `open.bigmodel.cn` 会走 GLM 国内配额接口）。少数路由靠 URL 路径区分：`opencode-go` 只认 `opencode.ai` 下的 `/zen/go` 路径，`openai-codex` 只认 `chatgpt.com` 下含 `/backend-api` 的路径。
 - Qwen 与 Xiaomi MiMo 的推理 Key 不能查询额度，分别需要控制台 token 与控制台 Cookie，配置方式见 [providers.md](providers.md#阿里云百炼-qwen-token-plan) 与 [providers.md](providers.md#xiaomi-mimo-开放平台按量余额--token-plan)。
-- Baseten、Fireworks AI、Together AI、Hugging Face 官方没有余额接口，状态行显示的是**当月已用金额**，不是余额或套餐百分比；Hugging Face 无金额数据时降级显示本月请求数。
+- Baseten、Fireworks AI、Together AI、Hugging Face 官方没有余额接口，状态行显示的是**当月已用金额**，不是余额或套餐百分比；Hugging Face 无金额但存在有效请求计数时才降级显示本月请求数。
 - Anthropic 与 OpenAI 同样没有余额接口，状态行显示**本月已用**，且必须使用 Console 创建的 **Admin Key**（`sk-ant-admin…` / `sk-admin…`，OpenAI 仅组织 Owner），普通推理 Key 查询不到用量。
 - xAI 的推理 Key 不能查询账单，需要 console.x.ai 创建的 Management Key，配置方式见 [providers.md](providers.md#xai预付余额)。
 - Cloudflare 的额度查询用的是账户级 API Token（AI Gateway Read / Billing Read 权限）加 `CLOUDFLARE_ACCOUNT_ID`，与推理用的 Workers AI / AI Gateway Token 是两份互不替代的凭证。
@@ -110,10 +110,10 @@ Kimi、OpenRouter 等虽然也支持 OAuth 订阅登录，但它们同时提供�
 
 - 手写网关路由（`llm-pi-ai.config.providers`）只要 `baseURL` 的主机命中已知映射（如自建代理转发到 `api.kimi.com`），插件同样能显示额度。
 - 主机未知的代理不会被猜测额度地址；在插件行的 `config.providers` 里显式声明 `kind`、`endpoint`、`keyNames` 即可复用现有适配器，无需改代码，见 [providers.md](providers.md#自定义或增加-provider)。
-- OAuth-only 路由不再一概返回 `unsupported`：`openai-codex`（`chatgpt.com` 的 `/backend-api` 路径）可通过显式配置的 ChatGPT OAuth Token + Account ID 显示额度，`github-copilot` 也可用显式配置的 GitHub Token 查询；其余 OAuth-only 路由、未激活的 provider、自托管地址仍默认返回 `unsupported`。
+- OAuth-only 路由不再一概返回 `unsupported`：定义了专用 `route()` 的 Provider 默认可在 OAuth gate 之前尝试，以使用控制台或专用凭证；当前包括 MiMo、Qwen、xAI、Anthropic、OpenAI、Copilot、Codex、OpenCode Go、Cloudflare 和 DeepSeek。它们仍依赖激活的 DSH 目录与 profile；其余 OAuth-only 路由、未激活 provider、未知自托管地址默认返回 `unsupported`。该通用行为由 `allowSpecialBeforeOAuth` 控制。
 
 ## 四、想让某个供应商显示额度
 
 1. 先确认 dsh 中该 provider 的路由 id 与 `baseURL` 主机（模型选择器里的 provider id 即路由名）。
 2. 若主机已命中本文第一节的映射，只差凭证配置。
-3. 否则按 [providers.md](providers.md#接入新的额度体系) 新增适配器：`providers/<kind>.js` + 注册表登记 + 必要时在 `providers/resolve.js` 增加解析分支，并同步更新本文与根目录 README 的支持范围表。
+3. 否则按 [providers.md](providers.md#接入新的额度体系) 实现独立 Provider 并通过 `providerModules` 加载；若收入内置版本，则新增 `providers/<kind>.js` 并在 `builtinProviders()` 登记。URL 识别写入 Provider 自身的 `route()`，不再向 `providers/resolve.js` 或 `client.js` 添加品牌分支，并同步更新本文与根目录 README 的支持范围。

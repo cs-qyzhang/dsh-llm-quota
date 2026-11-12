@@ -1,13 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { currentUtcMonth } from '../providers/shared.js'
-import {
-  DEFAULT_ENDPOINT,
-  KEY_NAMES,
-  kind,
-  read,
-  routeFor,
-} from '../providers/anthropic.js'
+import * as adapter from '../providers/anthropic.js'
+import { readProvider } from './provider-test.js'
+const { DEFAULT_ENDPOINT, KEY_NAMES, kind, routeFor } = adapter
+const read = (ctx, route) => readProvider(adapter, ctx, route)
 
 // Amounts are USD cents as decimal strings: 123.45 + 100 + 50.5 + 26.05 = 300
 // cents, i.e. $3.00 for the month.
@@ -117,6 +114,38 @@ test('read sums cost report amounts in cents and sends admin headers', async () 
   assert.ok(url.searchParams.get('starting_at').startsWith(currentUtcMonth().month))
   assert.ok(url.searchParams.get('ending_at'))
   assert.ok(String(calls[1].url).includes('/v1/organizations/usage_report/messages'))
+})
+
+test('read aggregates cost and usage pages without dropping later buckets', async () => {
+  const calls = mockFetch((url) => {
+    const target = new URL(url)
+    const page = target.searchParams.get('page')
+    const usage = target.pathname.includes('usage_report')
+    if (page === 'second') return {
+      data: [{ results: [usage
+        ? { uncached_input_tokens: 5, output_tokens: 2 }
+        : { amount: '50', cost_type: 'tokens' }] }],
+      has_more: false, next_page: null,
+    }
+    return {
+      data: [{ results: [usage
+        ? { uncached_input_tokens: 10, output_tokens: 3 }
+        : { amount: '100', cost_type: 'tokens' }] }],
+      has_more: true, next_page: 'second',
+    }
+  })
+  const result = await read(fakeCtx({ ANTHROPIC_ADMIN_KEY: 'key' }), route())
+  assert.equal(result.usedAmount, '1.5')
+  assert.equal(result.inputTokens, 15)
+  assert.equal(result.outputTokens, 5)
+  assert.equal(calls.filter((call) => new URL(call.url).searchParams.get('page') === 'second').length, 2)
+})
+
+test('read rejects missing pagination cursors instead of reporting partial cost', async () => {
+  mockFetch((url) => String(url).includes('usage_report')
+    ? { data: [], has_more: false, next_page: null }
+    : { data: [{ results: [{ amount: '100' }] }], has_more: true, next_page: null })
+  await assert.rejects(() => read(fakeCtx({ ANTHROPIC_ADMIN_KEY: 'key' }), route()), /invalid quota pagination/)
 })
 
 test('read returns missing-credential without calling fetch', async () => {

@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { read } from '../providers/huggingface.js'
+import * as adapter from '../providers/huggingface.js'
+import { readProvider } from './provider-test.js'
+const read = (ctx, route) => readProvider(adapter, ctx, route)
 
 const ROUTE = {
   provider: 'huggingface',

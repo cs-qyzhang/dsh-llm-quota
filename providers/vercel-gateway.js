@@ -4,18 +4,20 @@
  * spend directly; both figures are in USD.
  */
 
-import { fetchJson, nowIso, resolveKey, unavailable, walletBalance } from './shared.js'
+import { walletBalance } from './shared.js'
 
 export const kind = 'vercel-gateway'
 export const hosts = {
   'ai-gateway.vercel.sh': 'https://ai-gateway.vercel.sh/v1/credits',
 }
 
-export async function read(ctx, route) {
-  const key = await resolveKey(ctx, route.keyNames)
-  if (!key) return unavailable(route, 'missing-credential')
+export const view = { preset: 'credits', title: 'Vercel AI Gateway' }
 
-  const json = await fetchJson(route.endpoint, {
+export async function read({ route, credentials, http, nowIso }, _route) {
+  const key = await credentials.resolve(route.keyNames)
+  if (!key) return { reason: 'missing-credential' }
+
+  const json = await http.json(route.endpoint, {
     headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
   })
   const amount = walletBalance(json?.balance)

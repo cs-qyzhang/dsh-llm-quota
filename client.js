@@ -28,43 +28,309 @@ window.__ModuleLoader__.load({
       return HISTORY_RANGES.some((entry) => entry.id === value) ? value : DEFAULT_HISTORY_RANGE
     }
 
-    // Credential references the provider adapters resolve, primary name first.
-    // The aliases keep parity with providers/qwen.js, providers/xai.js and
-    // providers/xiaomi-mimo.js.
-    const MIMO_REFS = ['MIMO_COOKIE', 'XIAOMI_MIMO_COOKIE']
-    const QWEN_REFS = ['QWEN_CONSOLE_TOKEN', 'BAILIAN_CONSOLE_TOKEN']
-    const XAI_REFS = ['XAI_MANAGEMENT_KEY', 'XAI_MANAGEMENT_API_KEY']
-    const ADMIN_KEY_REFS = ['ANTHROPIC_ADMIN_KEY', 'ANTHROPIC_ADMIN_API_KEY', 'OPENAI_ADMIN_KEY', 'OPENAI_ADMIN_API_KEY']
-    const GITHUB_TOKEN_REFS = ['COPILOT_GITHUB_TOKEN', 'GITHUB_TOKEN', 'GH_TOKEN']
-    const CODEX_TOKEN_REFS = ['OPENAI_CODEX_TOKEN', 'OPENAI_CODEX_OAUTH_TOKEN', 'CHATGPT_OAUTH_TOKEN']
-    const CODEX_ACCOUNT_REFS = ['OPENAI_CODEX_ACCOUNT_ID', 'CHATGPT_ACCOUNT_ID']
-    const CLOUDFLARE_TOKEN_REFS = ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_API_KEY']
-    const CLOUDFLARE_ACCOUNT_REFS = ['CLOUDFLARE_ACCOUNT_ID']
+    function formatAmount(currency, amount) {
+      const symbol = currency === 'CNY' ? '¥' : currency === 'USD' ? '$' : ''
+      const value = typeof amount === 'number' ? amount : Number.parseFloat(amount)
+      if (!Number.isFinite(value)) return `${symbol}${amount ?? ''}`.trim()
+      return `${symbol}${value.toFixed(2)}`
+    }
 
-    // Providers that report month-to-date spend instead of a balance or plan.
-    const USAGE_KINDS = new Set(['anthropic', 'baseten', 'fireworks', 'huggingface', 'openai', 'together'])
-    const TITLES = {
-      anthropic: 'Anthropic',
-      baseten: 'Baseten',
-      cloudflare: 'Cloudflare',
-      fireworks: 'Fireworks',
-      'github-copilot': 'GitHub Copilot',
-      huggingface: 'Hugging Face',
-      openai: 'OpenAI',
-      'openai-codex': 'OpenAI Codex',
-      'opencode-go': 'OpenCode Go',
-      radius: 'Radius',
-      together: 'Together AI',
-      xai: 'xAI',
+    // Provider views arrive from the Host manifest (built from providers/*). The
+    // engine owns the manifest-driven layout fallbacks, per-provider copy and row
+    // rendering; it lives here because the browser bundle is a single classic
+    // script with no module resolution.
+    function createViewEngine() {
+      let manifest = { views: {}, credentials: [], messages: {} }
+      let language = 'en'
+      let revision = 0
+      const listeners = new Set()
+
+      function publish() {
+        revision += 1
+        for (const listener of listeners) listener()
+      }
+
+      function currentMessage(key) {
+        return manifest.messages?.[language]?.[key] ?? manifest.messages?.en?.[key]
+      }
+
+      /** Provider params carry relative times as `{ relative, options }`. */
+      function formatParam(param) {
+        if (param && typeof param === 'object' && typeof param.relative === 'string') {
+          return absoluteTime(Date.parse(param.relative), param.options)
+        }
+        return param
+      }
+
+      function paramsOf(params) {
+        if (!params || typeof params !== 'object') return params
+        return Object.fromEntries(
+          Object.entries(params).map(([key, value]) => [key, formatParam(value)]),
+        )
+      }
+
+      function providerMessage(value) {
+        const template = currentMessage(value.key) ?? value.key
+        return template.replace(/\{(\w+)\}/g, (_, name) => {
+          const param = Object.hasOwn(value.params ?? {}, name) ? value.params[name] : undefined
+          return param === undefined ? `{${name}}` : String(formatParam(param))
+        })
+      }
+
+      function text(value, tr) {
+        if (Array.isArray(value)) return value.map((entry) => text(entry, tr)).join('')
+        if (value && typeof value === 'object' && typeof value.key === 'string') {
+          return currentMessage(value.key) !== undefined
+            ? providerMessage(value)
+            : tr(value.key, paramsOf(value.params))
+        }
+        return String(value ?? '')
+      }
+
+      function formatNumber(value) {
+        const number = typeof value === 'number' ? value : Number.parseFloat(value)
+        return Number.isFinite(number) ? number.toLocaleString() : String(value ?? '')
+      }
+
+      function formatWindow(window, tr) {
+        if (window.used !== undefined && window.limit !== undefined) {
+          return tr('mimoUsed', {
+            used: formatNumber(window.used),
+            limit: formatNumber(window.limit),
+            percent: window.usedPercent,
+          })
+        }
+        return tr('remaining', { percent: window.remainingPercent })
+      }
+
+      function relativeDuration(milliseconds) {
+        const hours = Math.floor(milliseconds / 3_600_000)
+        const minutes = Math.max(1, Math.floor((milliseconds % 3_600_000) / 60_000))
+        return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`
+      }
+
+      function absoluteTime(time, options) {
+        return new Date(time).toLocaleString(undefined, options ?? {
+          month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+        })
+      }
+
+      function resetLabel(iso, tr) {
+        const time = Date.parse(iso)
+        if (!Number.isFinite(time)) return null
+        const difference = time - Date.now()
+        if (difference > 0 && difference < 86_400_000) {
+          return tr('resetsIn', { time: relativeDuration(difference) })
+        }
+        return tr('resetsAt', { time: absoluteTime(time) })
+      }
+
+      function rowSpec(label, value, note) {
+        return note ? { label, value, note } : { label, value }
+      }
+
+      const groups = {
+        balance: {
+          gauge: () => false,
+          compact: (data, tr) => tr('balance', { amount: formatAmount(data.currency, data.amount) }),
+          badge: (data) => formatAmount(data.currency, data.amount),
+          rows(data, tr) {
+            const specs = []
+            for (const wallet of Array.isArray(data.wallets) ? data.wallets : []) {
+              specs.push(rowSpec(tr('toppedUp'), formatAmount(wallet.currency, wallet.balance)))
+            }
+            for (const wallet of Array.isArray(data.bonusWallets) ? data.bonusWallets : []) {
+              if (Number.parseFloat(wallet.balance) > 0) specs.push(rowSpec(tr('bonus'), formatAmount(wallet.currency, wallet.balance)))
+            }
+            if (data.cycleUsage !== undefined) specs.push(rowSpec(tr('cycleUsage'), formatAmount(data.currency, data.cycleUsage)))
+            if (typeof data.available === 'boolean') specs.push(rowSpec(tr('status'), data.available ? tr('available') : tr('insufficient')))
+            return specs
+          },
+        },
+        credits: {
+          gauge: () => false,
+          compact: (data, tr) => tr('balance', { amount: formatAmount(data.currency, data.amount) }),
+          badge: (data) => formatAmount(data.currency, data.amount),
+          rows(data, tr) {
+            const specs = []
+            if (data.amount !== undefined) specs.push(rowSpec(tr('creditsRemaining'), formatAmount(data.currency, data.amount)))
+            if (data.totalCredits !== undefined) specs.push(rowSpec(tr('creditsPurchased'), formatAmount(data.currency, data.totalCredits)))
+            if (data.totalUsage !== undefined) specs.push(rowSpec(tr('creditsUsed'), formatAmount(data.currency, data.totalUsage)))
+            return specs
+          },
+        },
+        usage: {
+          gauge: () => false,
+          compact(data, tr) {
+            if (data.usedAmount !== undefined) return tr('usedMonth', { amount: formatAmount(data.currency, data.usedAmount) })
+            if (Number.isFinite(data.requestCount)) return tr('usedRequests', { count: data.requestCount })
+            return tr('error')
+          },
+          badge(data) {
+            if (data.usedAmount !== undefined) return formatAmount(data.currency, data.usedAmount)
+            return Number.isFinite(data.requestCount) ? String(data.requestCount) : ''
+          },
+          rows(data, tr) {
+            const specs = []
+            if (data.usedAmount !== undefined) specs.push(rowSpec(tr('usedMonthName'), formatAmount(data.currency, data.usedAmount)))
+            if (Number.isFinite(data.requestCount)) specs.push(rowSpec(tr('requestCountName'), String(data.requestCount)))
+            if (Number.isFinite(data.inputTokens) && Number.isFinite(data.outputTokens)) specs.push(rowSpec(tr('tokenUsage'), `${data.inputTokens} / ${data.outputTokens}`))
+            if (Number.parseFloat(data.creditsAmount) > 0 && data.chargedAmount !== undefined) {
+              specs.push(rowSpec(tr('creditsApplied'), formatAmount(data.currency, data.creditsAmount)))
+              specs.push(rowSpec(tr('chargedAmount'), formatAmount(data.currency, data.chargedAmount)))
+            }
+            return specs
+          },
+        },
+        plan: {
+          gauge: () => true,
+          compact(data, tr) {
+            const parts = []
+            if (data.fiveHour) parts.push(tr('fiveHour', { percent: data.fiveHour.remainingPercent }))
+            if (data.weekly) parts.push(tr('weekly', { percent: data.weekly.remainingPercent }))
+            return parts.length > 0 ? parts.join(' · ') : tr('error')
+          },
+          badge(data, tr) {
+            const parts = []
+            if (data.fiveHour && Number.isFinite(data.fiveHour.remainingPercent)) parts.push(tr('badgeFiveHour', { percent: data.fiveHour.remainingPercent }))
+            if (data.weekly && Number.isFinite(data.weekly.remainingPercent)) parts.push(tr('badgeWeekly', { percent: data.weekly.remainingPercent }))
+            return parts.join(' · ')
+          },
+          rows(data, tr) {
+            const specs = []
+            for (const [key, label] of [['fiveHour', 'fiveHourName'], ['weekly', 'weeklyName'], ['monthly', 'monthlyName']]) {
+              if (data[key]) specs.push(rowSpec(tr(label), tr('remaining', { percent: data[key].remainingPercent }), resetLabel(data[key].resetAt, tr)))
+            }
+            return specs
+          },
+        },
+      }
+
+      function viewOf(data) {
+        const id = data?.viewId ?? data?.kind
+        const registered = manifest.views[id]
+        const supplied = data?.view
+        if (supplied && Object.keys(supplied).length > 0) return { ...registered, ...supplied }
+        return registered ?? {
+          preset: data?.kind === 'balance' || data?.amount !== undefined || data?.wallets !== undefined || typeof data?.available === 'boolean' ? 'balance'
+            : data?.usedAmount !== undefined || data?.requestCount !== undefined ? 'usage' : 'plan',
+          title: { key: 'balanceTitle' }, gauge: false,
+        }
+      }
+
+      function groupOf(view) {
+        return groups[view.preset ?? view.group] ?? groups.plan
+      }
+
+      function renderRows(data, tr) {
+        const rows = data?.view?.rows ?? manifest.views[data?.viewId ?? data?.kind]?.rows
+        return rows?.map((row) => ({
+          ...row,
+          label: text(row.label, tr),
+          value: text(row.value, tr),
+          ...(row.note ? { note: text(row.note, tr) } : {}),
+        }))
+      }
+
+      function compactLabel(data, tr) {
+        if (!data || data.ok === false) return tr('error')
+        const view = viewOf(data)
+        return view.compact !== undefined ? text(view.compact, tr) : groupOf(view).compact(data, tr)
+      }
+
+      function badgeText(data, tr) {
+        if (!data || data.ok !== true) return ''
+        const view = viewOf(data)
+        return view.badge !== undefined ? text(view.badge, tr) : groupOf(view).badge(data, tr)
+      }
+
+      function panelTitle(data, tr) {
+        if (!data || data.ok === false) return tr('title')
+        return text(viewOf(data).title, tr)
+      }
+
+      function errorLabel(data, tr) {
+        if (!data) return tr('error')
+        const view = viewOf(data)
+        const custom = view.errors?.[data.reason]
+        if (custom !== undefined) return text(custom, tr)
+        if (data.reason === 'missing-credential') return tr('missingCredential')
+        return tr('error')
+      }
+
+      function rowSpecsOf(data, tr) {
+        const view = viewOf(data)
+        return renderRows(data, tr) ?? groupOf(view).rows(data, tr)
+      }
+
+      function providerGauge(data) {
+        if (!data) return false
+        const view = viewOf(data)
+        return view.gauge ?? groupOf(view).gauge(data)
+      }
+
+      function historyMetric(key) {
+        return manifest.history?.[key] ?? {}
+      }
+
+      function historySeries(points) {
+        const groups = new Map()
+        for (const point of points) {
+          const time = Date.parse(point?.at)
+          if (!Number.isFinite(time) || !point.metrics || typeof point.metrics !== 'object') continue
+          for (const [key, raw] of Object.entries(point.metrics)) {
+            const value = typeof raw === 'number' ? raw : Number(raw)
+            if (!Number.isFinite(value)) continue
+            const unit = historyMetric(key).unit === 'currency' ? (point.currency ?? '') : (historyMetric(key).unit ?? 'percent')
+            const id = `${key}:${unit}`
+            if (!groups.has(id)) groups.set(id, { id, key, unit, points: [] })
+            groups.get(id).points.push({ at: point.at, time, raw, value })
+          }
+        }
+        return [...groups.values()]
+      }
+
+      function preferredHistorySeries(series) {
+        for (const key of manifest.historyPriority ?? []) {
+          const match = series.find((entry) => entry.key === key)
+          if (match) return match
+        }
+        return series[0]
+      }
+
+      function historyMetricLabel(key, tr) {
+        return text(historyMetric(key).label ?? key, tr)
+      }
+
+      return {
+        setManifest(value) {
+          manifest = value ?? { views: {}, credentials: [], messages: {} }
+          publish()
+        },
+        setLanguage(value) {
+          const id = String(value || 'en').toLowerCase()
+          const next = Object.hasOwn(manifest.messages ?? {}, id) ? id : id.split('-')[0]
+          if (next === language) return
+          language = next
+          publish()
+        },
+        getSnapshot: () => revision,
+        subscribe(listener) {
+          listeners.add(listener)
+          return () => listeners.delete(listener)
+        },
+        credentialRows: () => manifest.credentials ?? [],
+        text,
+        viewOf, compactLabel, badgeText, panelTitle, errorLabel, rowSpecsOf, providerGauge,
+        formatNumber, formatWindow, absoluteTime, resetLabel,
+        historySeries, preferredHistorySeries, historyMetricLabel,
+      }
     }
-    // Extra-credential providers label their "not configured" hint precisely.
-    const MISSING_CREDENTIAL_LABEL = {
-      anthropic: 'missingAdminKey',
-      openai: 'missingAdminKey',
-      'github-copilot': 'missingGitHubToken',
-      'openai-codex': 'missingCodexToken',
-      cloudflare: 'missingCloudflareCredential',
-    }
+
+    const views = createViewEngine()
+    const { compactLabel, badgeText, panelTitle, errorLabel, rowSpecsOf, providerGauge,
+      formatNumber, formatWindow, absoluteTime, resetLabel, historySeries,
+      preferredHistorySeries, historyMetricLabel } = views
 
     const TOKENS = {
       text: 'var(--dsw-alias-label-tertiary)',
@@ -119,7 +385,7 @@ window.__ModuleLoader__.load({
     function fallbackTranslate(key, params) {
       const template = messages.en?.[key] ?? key
       return template.replace(/\{(\w+)\}/g, (_, name) => (
-        params && params[name] !== undefined ? String(params[name]) : `{${name}}`
+        params && Object.hasOwn(params, name) && params[name] !== undefined ? String(params[name]) : `{${name}}`
       ))
     }
 
@@ -147,12 +413,6 @@ window.__ModuleLoader__.load({
       return response.value
     }
 
-    function formatAmount(currency, amount) {
-      const symbol = currency === 'CNY' ? '¥' : currency === 'USD' ? '$' : ''
-      const value = typeof amount === 'number' ? amount : Number.parseFloat(amount)
-      if (!Number.isFinite(value)) return `${symbol}${amount ?? ''}`.trim()
-      return `${symbol}${value.toFixed(2)}`
-    }
 
     async function requestQuota(provider, signal) {
       const query = provider ? `?provider=${encodeURIComponent(provider)}` : ''
@@ -184,6 +444,14 @@ window.__ModuleLoader__.load({
       return data.dictionaries
     }
 
+    async function requestViews(signal) {
+      const response = await fetch('/api/llm-quota/views', { signal, headers: { Accept: 'application/json' } })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const data = await response.json()
+      if (!data || data.ok !== true || !data.views || typeof data.views !== 'object') throw new Error('invalid views response')
+      return data
+    }
+
     async function requestQuotaHistory(provider, range, signal) {
       const selected = HISTORY_RANGES.find((entry) => entry.id === normalizeHistoryRange(range))
       const query = new URLSearchParams()
@@ -204,184 +472,6 @@ window.__ModuleLoader__.load({
       return data
     }
 
-    function formatNumber(value) {
-      const number = typeof value === 'number' ? value : Number.parseFloat(value)
-      return Number.isFinite(number) ? number.toLocaleString() : String(value ?? '')
-    }
-
-    function formatWindow(window, tr) {
-      if (window.used !== undefined && window.limit !== undefined) {
-        return tr('mimoUsed', {
-          used: formatNumber(window.used),
-          limit: formatNumber(window.limit),
-          percent: window.usedPercent,
-        })
-      }
-      return tr('remaining', { percent: window.remainingPercent })
-    }
-
-    function capitalise(value) {
-      return typeof value === 'string' && value.length > 0
-        ? value[0].toUpperCase() + value.slice(1)
-        : value
-    }
-
-    function relativeDuration(milliseconds) {
-      const hours = Math.floor(milliseconds / 3_600_000)
-      const minutes = Math.max(1, Math.floor((milliseconds % 3_600_000) / 60_000))
-      return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`
-    }
-
-    function absoluteTime(time) {
-      return new Date(time).toLocaleString(undefined, {
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-      })
-    }
-
-    function resetLabel(iso, tr) {
-      const time = Date.parse(iso)
-      if (!Number.isFinite(time)) return null
-      const difference = time - Date.now()
-      if (difference > 0 && difference < 86_400_000) {
-        return tr('resetsIn', { time: relativeDuration(difference) })
-      }
-      return tr('resetsAt', { time: absoluteTime(time) })
-    }
-
-    function compactLabel(data, tr) {
-      if (!data || data.ok === false) return tr('error')
-      if (data.kind === 'balance' || data.kind === 'openrouter' || data.kind === 'vercel-gateway') {
-        return tr('balance', { amount: formatAmount(data.currency, data.amount) })
-      }
-      if (data.kind === 'xiaomi-mimo') {
-        const mimoParts = []
-        if (data.amount !== undefined) {
-          mimoParts.push(tr('balance', { amount: formatAmount(data.currency, data.amount) }))
-        }
-        if (data.plan && Number.isFinite(data.plan.remainingPercent)) {
-          mimoParts.push(tr('mimoPlanLeft', { percent: data.plan.remainingPercent }))
-        }
-        return mimoParts.length > 0 ? mimoParts.join(' · ') : tr('error')
-      }
-      if (data.kind === 'qwen') {
-        return data.plan && Number.isFinite(data.plan.remainingPercent)
-          ? tr('qwenPlanLeft', { percent: data.plan.remainingPercent })
-          : tr('error')
-      }
-      if (data.kind === 'github-copilot') {
-        return data.plan && Number.isFinite(data.plan.remainingPercent)
-          ? tr('planLeft', { percent: data.plan.remainingPercent })
-          : tr('error')
-      }
-      if (data.kind === 'xai' || data.kind === 'cloudflare') {
-        if (data.amount !== undefined) {
-          return tr('balance', { amount: formatAmount(data.currency, data.amount) })
-        }
-        return tr('usedMonth', { amount: formatAmount(data.currency, data.cycleUsage) })
-      }
-      if (USAGE_KINDS.has(data.kind)) {
-        if (data.usedAmount !== undefined) {
-          return tr('usedMonth', { amount: formatAmount(data.currency, data.usedAmount) })
-        }
-        if (Number.isFinite(data.requestCount)) {
-          return tr('usedRequests', { count: data.requestCount })
-        }
-        return tr('error')
-      }
-      const parts = []
-      if (data.fiveHour) parts.push(tr('fiveHour', { percent: data.fiveHour.remainingPercent }))
-      if (data.weekly) parts.push(tr('weekly', { percent: data.weekly.remainingPercent }))
-      return parts.length > 0 ? parts.join(' · ') : tr('error')
-    }
-
-    function badgeText(data, tr) {
-      if (!data || data.ok !== true) return ''
-      if (data.kind === 'balance' || data.kind === 'openrouter' || data.kind === 'vercel-gateway') {
-        return formatAmount(data.currency, data.amount)
-      }
-      if (data.kind === 'xiaomi-mimo') {
-        const parts = []
-        if (data.amount !== undefined) parts.push(formatAmount(data.currency, data.amount))
-        if (data.plan && Number.isFinite(data.plan.remainingPercent)) {
-          parts.push(tr('badgePlan', { percent: data.plan.remainingPercent }))
-        }
-        return parts.join(' · ')
-      }
-      if (data.kind === 'qwen') {
-        return data.plan && Number.isFinite(data.plan.remainingPercent)
-          ? tr('badgePlan', { percent: data.plan.remainingPercent })
-          : ''
-      }
-      if (data.kind === 'github-copilot') {
-        return data.plan && Number.isFinite(data.plan.remainingPercent)
-          ? tr('badgePlan', { percent: data.plan.remainingPercent })
-          : ''
-      }
-      if (data.kind === 'xai' || data.kind === 'cloudflare') {
-        return data.amount !== undefined
-          ? formatAmount(data.currency, data.amount)
-          : formatAmount(data.currency, data.cycleUsage)
-      }
-      if (USAGE_KINDS.has(data.kind)) {
-        if (data.usedAmount !== undefined) return formatAmount(data.currency, data.usedAmount)
-        return Number.isFinite(data.requestCount) ? String(data.requestCount) : ''
-      }
-      const parts = []
-      if (data.fiveHour && Number.isFinite(data.fiveHour.remainingPercent)) {
-        parts.push(tr('badgeFiveHour', { percent: data.fiveHour.remainingPercent }))
-      }
-      if (data.weekly && Number.isFinite(data.weekly.remainingPercent)) {
-        parts.push(tr('badgeWeekly', { percent: data.weekly.remainingPercent }))
-      }
-      return parts.join(' · ')
-    }
-
-    function panelTitle(data, tr) {
-      if (!data || data.ok === false) return tr('title')
-      if (data.kind === 'balance') {
-        if (data.service === 'moonshot') return tr('moonshotTitle')
-        return TITLES[data.service] ?? tr('balanceTitle')
-      }
-      if (data.kind === 'glm') return data.level ? `GLM ${capitalise(data.level)}` : 'GLM'
-      if (data.kind === 'kimi') return 'Kimi'
-      if (data.kind === 'openrouter') return 'OpenRouter'
-      if (data.kind === 'vercel-gateway') return 'Vercel AI Gateway'
-      if (data.kind === 'minimax') {
-        return data.model ? `MiniMax · ${data.model}` : 'MiniMax'
-      }
-      if (data.kind === 'xiaomi-mimo') {
-        if (data.mode === 'balance') return `${tr('mimoTitle')} · ${tr('mimoPayg')}`
-        if (data.mode === 'plan') {
-          return data.plan?.name
-            ? `${tr('mimoTitle')} · ${tr('mimoTokenPlan')} (${data.plan.name})`
-            : `${tr('mimoTitle')} · ${tr('mimoTokenPlan')}`
-        }
-        return data.plan?.name ? `${tr('mimoTitle')} · ${data.plan.name}` : tr('mimoTitle')
-      }
-      if (data.kind === 'qwen') return `${tr('qwenTitle')} · ${tr('qwenTokenPlan')}`
-      if (data.kind === 'github-copilot') {
-        return data.planName ? `GitHub Copilot · ${data.planName}` : 'GitHub Copilot'
-      }
-      const titled = TITLES[data.kind]
-      if (titled) return titled
-      return tr('balanceTitle')
-    }
-
-    function errorLabel(data, tr) {
-      if (!data) return tr('error')
-      if (data.reason === 'missing-credential') {
-        return tr(MISSING_CREDENTIAL_LABEL[data.kind] ?? 'missingCredential')
-      }
-      if (data.reason === 'missing-cookie') return tr('missingCookie')
-      if (data.reason === 'missing-console-token') return tr('missingConsoleToken')
-      if (data.reason === 'missing-management-key') return tr('missingManagementKey')
-      if (data.reason === 'signed-out') return tr('signedOut')
-      return tr('error')
-    }
-
     function detailRow(label, value, note) {
       return h('div', {
         style: {
@@ -396,53 +486,6 @@ window.__ModuleLoader__.load({
       h('span', { style: { minWidth: 0, textAlign: 'right' } },
         h('span', { style: { color: TOKENS.textStrong, fontVariantNumeric: 'tabular-nums' } }, value),
         note ? h('span', { style: { display: 'block', color: TOKENS.textDim, fontSize: 11, lineHeight: '16px' } }, note) : null))
-    }
-
-    const HISTORY_AMOUNT_METRICS = new Set(['amount', 'usedAmount', 'cycleUsage'])
-    const HISTORY_METRIC_PRIORITY = [
-      'amount', 'usedAmount', 'cycleUsage', 'fiveHour', 'plan', 'weekly', 'monthly',
-      'chat', 'plan.month', 'plan.compensation',
-    ]
-
-    function historySeries(points) {
-      const groups = new Map()
-      for (const point of points) {
-        const time = Date.parse(point?.at)
-        if (!Number.isFinite(time) || !point.metrics || typeof point.metrics !== 'object') continue
-        for (const [key, raw] of Object.entries(point.metrics)) {
-          const value = typeof raw === 'number' ? raw : Number(raw)
-          if (!Number.isFinite(value)) continue
-          const unit = HISTORY_AMOUNT_METRICS.has(key) ? (point.currency ?? '') : 'percent'
-          const id = `${key}:${unit}`
-          if (!groups.has(id)) groups.set(id, { id, key, unit, points: [] })
-          groups.get(id).points.push({ at: point.at, time, raw, value })
-        }
-      }
-      return [...groups.values()]
-    }
-
-    function preferredHistorySeries(series) {
-      for (const key of HISTORY_METRIC_PRIORITY) {
-        const match = series.find((entry) => entry.key === key)
-        if (match) return match
-      }
-      return series[0]
-    }
-
-    function historyMetricLabel(key, tr) {
-      const labels = {
-        amount: 'metricAmount',
-        usedAmount: 'metricUsedAmount',
-        cycleUsage: 'metricCycleUsage',
-        fiveHour: 'fiveHourName',
-        weekly: 'weeklyName',
-        monthly: 'monthlyName',
-        plan: 'metricPlan',
-        chat: 'copilotChat',
-        'plan.month': 'mimoMonth',
-        'plan.compensation': 'mimoCompensation',
-      }
-      return tr(labels[key] ?? key)
     }
 
     function historyValue(unit, value, precise = false) {
@@ -489,7 +532,9 @@ window.__ModuleLoader__.load({
       const parsedStart = Date.parse(since)
       const firstPoint = series.points[0]
       const start = Number.isFinite(parsedStart) ? parsedStart : firstPoint.time
-      const end = Math.max(Date.now(), start + 1)
+      // Point times come from the Host clock; when the browser clock lags behind
+      // it, the window must still cover the newest sample or points get dropped.
+      const end = Math.max(Date.now(), start + 1, series.points[series.points.length - 1].time)
       let baseline
       const changes = []
       for (const point of series.points) {
@@ -728,7 +773,7 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
 }
 `
 
-    function installModelBadges(locale, tr) {
+    function installModelBadges(locale, tr, testHooks) {
       if (typeof document === 'undefined' || !document.head || typeof MutationObserver === 'undefined') {
         return () => {}
       }
@@ -743,6 +788,7 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
       let scanTimer = null
       let refreshTimer = null
       let stopLocale = null
+      let stopViews = null
 
       const render = () => {
         const rules = []
@@ -799,6 +845,11 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
           seen.add(provider)
           load(provider)
         }
+        // Drop providers that disappeared from the DOM so their quota polling
+        // stops; the periodic refresh runs after scan and re-renders from `feed`.
+        for (const provider of [...feed.keys()]) {
+          if (!seen.has(provider)) feed.delete(provider)
+        }
       }
 
       const schedule = () => {
@@ -829,10 +880,12 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
 
       try {
         if (typeof locale?.subscribe === 'function') stopLocale = locale.subscribe(render)
+        stopViews = views.subscribe(render)
       } catch {}
 
       scan()
       render()
+      testHooks?.({ feed, scan })
       refreshTimer = setInterval(() => {
         scan()
         render()
@@ -845,6 +898,7 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
         if (scanTimer !== null) clearTimeout(scanTimer)
         try {
           stopLocale?.()
+          stopViews?.()
         } catch {}
         for (const entry of feed.values()) {
           if (!entry.pending) continue
@@ -930,6 +984,9 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
         .map((ref) => views?.[ref]?.source)
         .find((value) => typeof value === 'string' && value.length > 0)
       const disabled = busy !== '' || loading || loadError !== '' || !primaryWritable
+      // clear() skips read-only refs on its own, so clearing stays available as
+      // long as any configured ref is writable even when the primary is not.
+      const clearDisabled = busy !== '' || loading || loadError !== '' || !clearable
 
       const status = loading
         ? tr('credentialLoading')
@@ -964,7 +1021,7 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
       }
 
       const clear = async () => {
-        if (disabled || !clearable) return
+        if (clearDisabled) return
         setBusy('clear')
         setError(null)
         setNotice('')
@@ -1045,9 +1102,9 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
           busy === 'save' ? tr('credentialSaving') : tr('credentialSave')),
         configured ? h('button', {
           type: 'button',
-          disabled: disabled || !clearable || busy !== '',
+          disabled: clearDisabled,
           onClick: clear,
-          style: rowButton(disabled || !clearable || busy !== '', false),
+          style: rowButton(clearDisabled, false),
         }, busy === 'clear' ? tr('credentialClearing') : tr('credentialClear')) : null),
       configured && !primaryWritable ? h('p', {
         style: { margin: 0, color: TOKENS.textDim, fontSize: 11, lineHeight: '16px' },
@@ -1072,6 +1129,7 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
         history: value.history !== false,
         historyDefaultRange: normalizeHistoryRange(value.historyDefaultRange),
         historyIntervalSeconds: String(value.historyIntervalSeconds ?? 30),
+        providerModules: JSON.stringify(value.providerModules ?? [], null, 2),
         providers: JSON.stringify(value.providers ?? {}, null, 2),
       }
     }
@@ -1082,9 +1140,11 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
       const cacheText = draft.cacheSeconds.trim()
       const intervalText = draft.historyIntervalSeconds.trim()
       const providersText = draft.providers.trim()
+      const modulesText = draft.providerModules.trim()
       let cacheSeconds
       let historyIntervalSeconds
       let providers
+      let providerModules
 
       const historyDefaultRange = normalizeHistoryRange(draft.historyDefaultRange)
       if (historyDefaultRange !== draft.historyDefaultRange) {
@@ -1113,12 +1173,21 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
         if (!valid) return { error: { key: 'providersInvalid' } }
       }
 
+      if (modulesText) {
+        try { providerModules = JSON.parse(modulesText) }
+        catch (failure) { return { error: { key: 'providerModulesInvalid', message: failure.message } } }
+        if (!Array.isArray(providerModules) || !providerModules.every((value) => typeof value === 'string' && value.trim() !== '')) {
+          return { error: { key: 'providerModulesInvalid', message: '' } }
+        }
+      }
+
       const fields = [
         ['cacheSeconds', cacheSeconds, cacheText === '', Object.is(current.cacheSeconds ?? 30, cacheSeconds)],
         ['history', draft.history, false, Object.is(current.history !== false, draft.history)],
         ['historyDefaultRange', historyDefaultRange, false, Object.is(normalizeHistoryRange(current.historyDefaultRange), historyDefaultRange)],
         ['historyIntervalSeconds', historyIntervalSeconds, intervalText === '', Object.is(current.historyIntervalSeconds ?? 30, historyIntervalSeconds)],
         ['providers', providers, providersText === '', JSON.stringify(current.providers ?? {}) === JSON.stringify(providers)],
+        ['providerModules', providerModules, modulesText === '', JSON.stringify(current.providerModules ?? []) === JSON.stringify(providerModules)],
       ]
       const ops = []
       for (const [path, value, unset, unchanged] of fields) {
@@ -1302,6 +1371,15 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
             },
           }),
           h('p', { style: hintStyle }, tr('providersConfigHint'))),
+        h('label', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+          h('span', { style: labelStyle }, tr('providerModules')),
+          h('textarea', {
+            value: draft.providerModules, disabled, rows: 3, spellCheck: false,
+            'aria-label': tr('providerModules'),
+            onChange: (event) => update('providerModules', event.target.value),
+            style: { ...inputStyle, maxWidth: 'none', height: 'auto', padding: 10, fontFamily: 'monospace', resize: 'vertical' },
+          }),
+          h('p', { style: hintStyle }, tr('providerModulesHint'))),
         h('div', null, h('button', {
           type: 'button', disabled, onClick: save, style: rowButton(disabled, true),
         }, busy ? tr('settingsSaving') : tr('settingsSave')))) : null,
@@ -1317,10 +1395,11 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
     }
 
     /**
-     * Bundle configuration page: the console credentials that providers such as
-     * Xiaomi MiMo and Qwen Token Plan need in addition to their inference key.
+     * Credential fields are supplied by the registered providers; secret values
+     * continue through the existing credentials Remote.
      */
     function ProviderCredentialsPage(props) {
+      React.useSyncExternalStore(views.subscribe, views.getSnapshot, views.getSnapshot)
       const tr = typeof props.t === 'function' ? props.t : fallbackTranslate
       const credentialProps = {
         t: tr,
@@ -1333,69 +1412,14 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
           h('h3', { style: { margin: 0, color: TOKENS.textStrong, fontSize: 13, fontWeight: 600 } }, tr('credentialsTitle')),
           h('p', { style: { margin: 0, color: TOKENS.textSecondary, fontSize: 12, lineHeight: '18px' } }, tr('credentialsHint')),
           h('p', { style: { margin: 0, color: TOKENS.textDim, fontSize: 11, lineHeight: '16px' } }, tr('credentialsEffective'))),
-        h(CredentialRow, {
+        views.credentialRows().map((row) => h(CredentialRow, {
+          key: row.id,
           ...credentialProps,
-          refs: MIMO_REFS,
-          label: tr('mimoCookie'),
-          hint: tr('mimoCookieHint'),
-          placeholder: tr('mimoCookiePlaceholder'),
-        }),
-        h(CredentialRow, {
-          ...credentialProps,
-          refs: QWEN_REFS,
-          label: tr('qwenToken'),
-          hint: tr('qwenTokenHint'),
-          placeholder: tr('qwenTokenPlaceholder'),
-        }),
-        h(CredentialRow, {
-          ...credentialProps,
-          refs: XAI_REFS,
-          label: tr('xaiKey'),
-          hint: tr('xaiKeyHint'),
-          placeholder: tr('xaiKeyPlaceholder'),
-        }),
-        h(CredentialRow, {
-          ...credentialProps,
-          refs: ADMIN_KEY_REFS,
-          label: tr('adminKey'),
-          hint: tr('adminKeyHint'),
-          placeholder: tr('adminKeyPlaceholder'),
-        }),
-        h(CredentialRow, {
-          ...credentialProps,
-          refs: GITHUB_TOKEN_REFS,
-          label: tr('githubToken'),
-          hint: tr('githubTokenHint'),
-          placeholder: tr('githubTokenPlaceholder'),
-        }),
-        h(CredentialRow, {
-          ...credentialProps,
-          refs: CODEX_TOKEN_REFS,
-          label: tr('codexToken'),
-          hint: tr('codexTokenHint'),
-          placeholder: tr('codexTokenPlaceholder'),
-        }),
-        h(CredentialRow, {
-          ...credentialProps,
-          refs: CODEX_ACCOUNT_REFS,
-          label: tr('codexAccount'),
-          hint: tr('codexAccountHint'),
-          placeholder: tr('codexAccountPlaceholder'),
-        }),
-        h(CredentialRow, {
-          ...credentialProps,
-          refs: CLOUDFLARE_TOKEN_REFS,
-          label: tr('cloudflareToken'),
-          hint: tr('cloudflareTokenHint'),
-          placeholder: tr('cloudflareTokenPlaceholder'),
-        }),
-        h(CredentialRow, {
-          ...credentialProps,
-          refs: CLOUDFLARE_ACCOUNT_REFS,
-          label: tr('cloudflareAccount'),
-          hint: tr('cloudflareAccountHint'),
-          placeholder: tr('cloudflareAccountPlaceholder'),
-        }))
+          refs: row.refs,
+          label: views.text(row.label, tr),
+          hint: views.text(row.hint, tr),
+          placeholder: views.text(row.placeholder, tr),
+        })))
     }
 
     function PluginConfigPage(props) {
@@ -1410,6 +1434,7 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
     }
 
     function QuotaPill({ useProjection, t }) {
+      React.useSyncExternalStore(views.subscribe, views.getSnapshot, views.getSnapshot)
       const tr = typeof t === 'function' ? t : fallbackTranslate
       const selection = useProjection('modelSelection')
       const provider = selection?.next?.provider ?? selection?.lastUsed?.provider ?? ''
@@ -1436,7 +1461,10 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
             const data = await requestQuota(provider, controller.signal)
             if (disposed) return
             if (data.ok === false && data.reason === 'error') {
-              setState((previous) => previous.data?.ok === true
+              // Transient failure: keep whatever payload (a success or an
+              // actionable terminal state like missing-credential) is on
+              // screen and mark it stale instead of clobbering it.
+              setState((previous) => previous.data
                 ? { data: { ...previous.data, stale: true }, error: false }
                 : { data, error: false })
             } else {
@@ -1444,7 +1472,7 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
             }
           } catch {
             if (!disposed) {
-              setState((previous) => previous.data?.ok === true
+              setState((previous) => previous.data
                 ? { data: { ...previous.data, stale: true }, error: false }
                 : { data: null, error: true })
             }
@@ -1494,17 +1522,7 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
       if (!data && !state.error) return null
 
       const label = compactLabel(data, tr)
-      const isPlan = data && (
-        data.kind === 'glm'
-        || data.kind === 'kimi'
-        || data.kind === 'minimax'
-        || data.kind === 'qwen'
-        || data.kind === 'github-copilot'
-        || data.kind === 'opencode-go'
-        || data.kind === 'openai-codex'
-        || (data.kind === 'xiaomi-mimo' && data.mode !== 'balance')
-      )
-      const icon = isPlan ? h(GaugeIcon) : h(CoinIcon)
+      const icon = providerGauge(data) ? h(GaugeIcon) : h(CoinIcon)
 
       const togglePanel = () => {
         if (open) {
@@ -1521,131 +1539,7 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
         if (!data || data.ok === false) {
           return h('div', { style: { color: TOKENS.textSecondary, padding: '2px 0' } }, errorLabel(data, tr))
         }
-        if (data.kind === 'balance') {
-          const rows = []
-          const wallets = Array.isArray(data.wallets) ? data.wallets : []
-          for (const wallet of wallets) {
-            rows.push(detailRow(tr('toppedUp'), formatAmount(wallet.currency, wallet.balance)))
-          }
-          const bonuses = Array.isArray(data.bonusWallets) ? data.bonusWallets : []
-          for (const wallet of bonuses) {
-            if (Number.parseFloat(wallet.balance) > 0) {
-              rows.push(detailRow(tr('bonus'), formatAmount(wallet.currency, wallet.balance)))
-            }
-          }
-          if (data.cycleUsage !== undefined) {
-            rows.push(detailRow(tr('cycleUsage'), formatAmount(data.currency, data.cycleUsage)))
-          }
-          if (typeof data.available === 'boolean') {
-            rows.push(detailRow(tr('status'), data.available ? tr('available') : tr('insufficient')))
-          }
-          return rows
-        }
-        if (data.kind === 'qwen') {
-          const rows = []
-          if (data.plan && Number.isFinite(data.plan.remainingPercent)) {
-            rows.push(detailRow(tr('qwenMonthly'), formatWindow(data.plan, tr), resetLabel(data.plan.resetAt, tr)))
-          }
-          return rows
-        }
-        if (data.kind === 'github-copilot') {
-          const rows = []
-          if (data.plan && Number.isFinite(data.plan.remainingPercent)) {
-            rows.push(detailRow(tr('copilotPremium'), formatWindow(data.plan, tr), resetLabel(data.plan.resetAt, tr)))
-          }
-          if (data.chat && Number.isFinite(data.chat.remainingPercent)) {
-            rows.push(detailRow(tr('copilotChat'), tr('remaining', { percent: data.chat.remainingPercent })))
-          }
-          return rows
-        }
-        if (data.kind === 'xiaomi-mimo') {
-          const rows = []
-          if (data.amount !== undefined) {
-            rows.push(detailRow(tr('mimoBalance'), formatAmount(data.currency, data.amount)))
-          }
-          if (data.cashBalance !== undefined) {
-            rows.push(detailRow(tr('mimoCash'), formatAmount(data.currency, data.cashBalance)))
-          }
-          if (Number.parseFloat(data.giftBalance) > 0) {
-            rows.push(detailRow(tr('mimoGift'), formatAmount(data.currency, data.giftBalance)))
-          }
-          if (Number.parseFloat(data.frozenBalance) > 0) {
-            rows.push(detailRow(tr('mimoFrozen'), formatAmount(data.currency, data.frozenBalance)))
-          }
-          const planRows = [
-            [tr('mimoPlan'), data.plan],
-            [tr('mimoMonth'), data.plan?.month],
-            [tr('mimoCompensation'), data.plan?.compensation],
-          ]
-          for (const [label, window] of planRows) {
-            if (!window || !Number.isFinite(window.remainingPercent)) continue
-            rows.push(detailRow(label, formatWindow(window, tr), resetLabel(window.resetAt, tr)))
-          }
-          return rows
-        }
-        if (USAGE_KINDS.has(data.kind)) {
-          const rows = []
-          if (data.usedAmount !== undefined) {
-            rows.push(detailRow(tr('usedMonthName'), formatAmount(data.currency, data.usedAmount)))
-          }
-          if (Number.isFinite(data.requestCount)) {
-            rows.push(detailRow(tr('requestCountName'), String(data.requestCount)))
-          }
-          if (Number.isFinite(data.inputTokens) && Number.isFinite(data.outputTokens)) {
-            rows.push(detailRow(tr('tokenUsage'), `${data.inputTokens} / ${data.outputTokens}`))
-          }
-          if (Number.parseFloat(data.creditsAmount) > 0 && data.chargedAmount !== undefined) {
-            rows.push(detailRow(tr('creditsApplied'), formatAmount(data.currency, data.creditsAmount)))
-            rows.push(detailRow(tr('chargedAmount'), formatAmount(data.currency, data.chargedAmount)))
-          }
-          return rows
-        }
-        if (data.kind === 'xai' || data.kind === 'cloudflare') {
-          const rows = []
-          if (data.amount !== undefined) {
-            rows.push(detailRow(tr('creditsRemaining'), formatAmount(data.currency, data.amount)))
-          }
-          if (data.cycleUsage !== undefined) {
-            rows.push(detailRow(tr('cycleUsage'), formatAmount(data.currency, data.cycleUsage)))
-          }
-          return rows
-        }
-        if (data.kind === 'openrouter' || data.kind === 'vercel-gateway') {
-          const rows = []
-          if (data.amount !== undefined) {
-            rows.push(detailRow(tr('creditsRemaining'), formatAmount(data.currency, data.amount)))
-          }
-          if (data.totalCredits !== undefined) {
-            rows.push(detailRow(tr('creditsPurchased'), formatAmount(data.currency, data.totalCredits)))
-          }
-          if (data.totalUsage !== undefined) {
-            rows.push(detailRow(tr('creditsUsed'), formatAmount(data.currency, data.totalUsage)))
-          }
-          return rows
-        }
-        const rows = []
-        if (data.fiveHour) {
-          rows.push(detailRow(
-            tr('fiveHourName'),
-            tr('remaining', { percent: data.fiveHour.remainingPercent }),
-            resetLabel(data.fiveHour.resetAt, tr),
-          ))
-        }
-        if (data.weekly) {
-          rows.push(detailRow(
-            tr('weeklyName'),
-            tr('remaining', { percent: data.weekly.remainingPercent }),
-            resetLabel(data.weekly.resetAt, tr),
-          ))
-        }
-        if (data.monthly) {
-          rows.push(detailRow(
-            tr('monthlyName'),
-            tr('remaining', { percent: data.monthly.remainingPercent }),
-            resetLabel(data.monthly.resetAt, tr),
-          ))
-        }
-        return rows
+        return rowSpecsOf(data, tr).map((spec) => detailRow(spec.label, spec.value, spec.note))
       }
 
       const renderPanel = () => {
@@ -1750,13 +1644,57 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
       inject: ['slots', 'locale'],
       __test: {
         QuotaHistory,
+        createViewEngine,
         normalizeHistoryRange,
         requestDictionaries,
         requestQuotaHistory,
         createSettingsDraft,
         settingsOperations,
+        compactLabel,
+        badgeText,
+        panelTitle,
+        errorLabel,
+        rowSpecsOf,
+        providerGauge,
+        viewOf: views.viewOf,
+        views,
+        installModelBadges,
+        requestViews,
       },
       apply(ctx) {
+        ctx.effect(() => {
+          let disposed = false
+          let retryTimer = null
+          let request = null
+          const syncLocale = () => views.setLanguage(
+            ctx.locale?.getLocale?.().active ?? ctx.locale?.getSnapshot?.().active ?? window.navigator?.language,
+          )
+          const load = async () => {
+            const controller = new AbortController()
+            const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+            request = { controller, timeout }
+            try {
+              const manifest = await requestViews(controller.signal)
+              if (disposed) return
+              views.setManifest(manifest)
+              syncLocale()
+            } catch {
+              if (!disposed) retryTimer = setTimeout(() => { void load() }, RETRY_MS)
+            } finally {
+              clearTimeout(timeout)
+              if (request?.controller === controller) request = null
+            }
+          }
+          syncLocale()
+          const unsubscribe = typeof ctx.locale?.subscribe === 'function' ? ctx.locale.subscribe(syncLocale) : undefined
+          void load()
+          return () => {
+            disposed = true
+            unsubscribe?.()
+            if (retryTimer !== null) clearTimeout(retryTimer)
+            request?.controller.abort()
+          }
+        }, 'llm-quota: provider views')
         // Message dictionaries live in the bundle's `locale/*.json` and arrive
         // through the Host i18n route. Registering after mount is safe: the
         // locale service bumps its revision and slot-rendered copy updates
@@ -1765,13 +1703,20 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
           let disposed = false
           let unregister = null
           let retryTimer = null
+          let request = null
           const load = async () => {
             let dictionaries
+            const controller = new AbortController()
+            const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+            request = { controller, timeout }
             try {
-              dictionaries = await requestDictionaries()
+              dictionaries = await requestDictionaries(controller.signal)
             } catch {
               if (!disposed) retryTimer = setTimeout(() => { void load() }, RETRY_MS)
               return
+            } finally {
+              clearTimeout(timeout)
+              if (request?.controller === controller) request = null
             }
             if (disposed) return
             messages = dictionaries
@@ -1785,6 +1730,7 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
           return () => {
             disposed = true
             if (retryTimer !== null) clearTimeout(retryTimer)
+            request?.controller.abort()
             try { unregister?.() } catch {}
           }
         }, 'llm-quota: dictionary')

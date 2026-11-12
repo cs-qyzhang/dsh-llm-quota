@@ -7,19 +7,21 @@
  * never opted in see a temporary failure.
  */
 
-import { currentUtcMonth, decimalAmount, fetchJson, nowIso, resolveKey, unavailable } from './shared.js'
+import { currentUtcMonth, decimalAmount } from './shared.js'
 
 export const kind = 'together'
 export const hosts = {
   'api.together.ai': 'https://api.together.ai/v1/billing/usage',
 }
 
-export async function read(ctx, route) {
-  const key = await resolveKey(ctx, route.keyNames)
-  if (!key) return unavailable(route, 'missing-credential')
+export const view = { preset: 'usage', title: 'Together AI' }
+
+export async function read({ route, credentials, http, nowIso }, _route) {
+  const key = await credentials.resolve(route.keyNames)
+  if (!key) return { reason: 'missing-credential' }
 
   const { month } = currentUtcMonth()
-  const json = await fetchJson(`${route.endpoint}?month=${encodeURIComponent(month)}`, {
+  const json = await http.json(`${route.endpoint}?month=${encodeURIComponent(month)}`, {
     headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
   })
   if (!Array.isArray(json?.data)) throw new Error('invalid quota response')

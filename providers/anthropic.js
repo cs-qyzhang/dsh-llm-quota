@@ -10,7 +10,7 @@
  * lags live usage by about five minutes.
  */
 
-import { currentUtcMonth, decimalAmount, fetchJson, nowIso, resolveKey, unavailable } from './shared.js'
+import { currentUtcMonth, decimalAmount } from './shared.js'
 
 export const kind = 'anthropic'
 export const DEFAULT_ENDPOINT = 'https://api.anthropic.com/v1/organizations/cost_report'
@@ -18,6 +18,7 @@ export const KEY_NAMES = ['ANTHROPIC_ADMIN_KEY', 'ANTHROPIC_ADMIN_API_KEY']
 
 const USAGE_ENDPOINT = 'https://api.anthropic.com/v1/organizations/usage_report/messages'
 const ANTHROPIC_VERSION = '2023-06-01'
+const MAX_PAGES = 100
 
 export const hosts = {
   'api.anthropic.com': DEFAULT_ENDPOINT,
@@ -31,9 +32,19 @@ export function routeFor(baseURL) {
   return undefined
 }
 
-export async function read(ctx, route) {
-  const key = await resolveKey(ctx, route.keyNames?.length ? route.keyNames : KEY_NAMES)
-  if (!key) return unavailable(route, 'missing-credential')
+export const view = {
+  preset: 'usage', title: 'Anthropic', errors: { 'missing-credential': { key: 'missingAdminKey' } },
+  credentials: [{ id: 'admin-key', refs: [...KEY_NAMES, 'OPENAI_ADMIN_KEY', 'OPENAI_ADMIN_API_KEY'], label: { key: 'adminKey' }, hint: { key: 'adminKeyHint' }, placeholder: { key: 'adminKeyPlaceholder' } }],
+}
+
+export function route({ inference }) {
+  const match = routeFor(inference.baseURL)
+  return match ? { kind, ...match } : undefined
+}
+
+export async function read({ route, credentials, http, nowIso }, _route) {
+  const key = await credentials.resolve(route.keyNames?.length ? route.keyNames : KEY_NAMES)
+  if (!key) return { reason: 'missing-credential' }
 
   const { startIso, endIso } = currentUtcMonth()
   const query = `starting_at=${encodeURIComponent(startIso)}&ending_at=${encodeURIComponent(endIso)}&bucket_width=1d`
@@ -47,11 +58,11 @@ export async function read(ctx, route) {
   // Token counts are best-effort extras; a failing usage report must not sink
   // the cost result.
   const [cost, usage] = await Promise.all([
-    fetchJson(`${base}?${query}`, { headers }),
-    fetchJson(`${USAGE_ENDPOINT}?${query}`, { headers }).catch(() => undefined),
+    fetchPages(http, `${base}?${query}`, headers),
+    fetchPages(http, `${USAGE_ENDPOINT}?${query}`, headers).catch(() => undefined),
   ])
 
-  const items = costItemsOf(cost)
+  const items = cost.flatMap(costItemsOf)
   let totalCents = 0
   const centsByType = new Map()
   for (const item of items) {
@@ -76,9 +87,29 @@ export async function read(ctx, route) {
       [...centsByType].map(([costType, cents]) => [costType, decimalAmount(cents / 100)]),
     )
   }
-  const tokens = tokensOf(usage)
+  const tokens = usage === undefined
+    ? undefined
+    : tokensOf(usage.length === 1 ? usage[0] : { data: usage.flatMap((page) => page.data) })
   if (tokens) Object.assign(result, tokens)
   return result
+}
+
+async function fetchPages(http, url, headers) {
+  const pages = []
+  const cursors = new Set()
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const json = await http.json(url, { headers })
+    if (!Array.isArray(json?.data)) throw new Error('invalid quota response')
+    pages.push(json)
+    const cursor = typeof json.next_page === 'string' && json.next_page ? json.next_page : undefined
+    if (!json.has_more) return pages
+    if (!cursor || cursors.has(cursor)) throw new Error('invalid quota pagination')
+    cursors.add(cursor)
+    const next = new URL(url)
+    next.searchParams.set('page', cursor)
+    url = next.toString()
+  }
+  throw new Error('quota response exceeds pagination limit')
 }
 
 /** Flatten the daily buckets of a cost/usage report into their result rows. */

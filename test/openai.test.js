@@ -1,13 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { currentUtcMonth } from '../providers/shared.js'
-import {
-  DEFAULT_ENDPOINT,
-  KEY_NAMES,
-  kind,
-  read,
-  routeFor,
-} from '../providers/openai.js'
+import * as adapter from '../providers/openai.js'
+import { readProvider } from './provider-test.js'
+const { DEFAULT_ENDPOINT, KEY_NAMES, kind, routeFor } = adapter
+const read = (ctx, route) => readProvider(adapter, ctx, route)
 
 // Costs are decimal USD values: 1.25 + 0.5 + 0.125 + 0.125 = 2.00 for the month.
 const COST_RESPONSE = {
@@ -142,6 +139,31 @@ test('read aggregates paginated cost results', async () => {
   const costCalls = calls.filter((call) => String(call.url).includes('/organization/costs'))
   assert.equal(costCalls.length, 2)
   assert.ok(String(costCalls[1].url).includes('page=page_2'))
+})
+
+test('read aggregates usage pages and rejects incomplete cost pagination', async () => {
+  const calls = mockFetch((url) => {
+    const target = new URL(url)
+    if (!target.pathname.includes('/usage/completions')) return COST_RESPONSE
+    if (target.searchParams.get('page') === 'next') return {
+      data: [{ results: [{ input_tokens: 5, output_tokens: 2, num_model_requests: 1 }] }],
+      has_more: false, next_page: null,
+    }
+    return {
+      data: [{ results: [{ input_tokens: 10, output_tokens: 3, num_model_requests: 2 }] }],
+      has_more: true, next_page: 'next',
+    }
+  })
+  const result = await read(fakeCtx({ OPENAI_ADMIN_KEY: 'key' }), route())
+  assert.equal(result.inputTokens, 15)
+  assert.equal(result.outputTokens, 5)
+  assert.equal(result.requestCount, 3)
+  assert.ok(calls.some((call) => new URL(call.url).searchParams.get('page') === 'next'))
+
+  mockFetch((url) => String(url).includes('/usage/completions')
+    ? { data: [], has_more: false, next_page: null }
+    : { results: [{ amount: { value: 1 } }], has_more: true, next_page: null })
+  await assert.rejects(() => read(fakeCtx({ OPENAI_ADMIN_KEY: 'key' }), route()), /invalid quota pagination/)
 })
 
 test('read returns missing-credential without calling fetch', async () => {

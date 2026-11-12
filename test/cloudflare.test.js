@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { read, routeFor, DEFAULT_ENDPOINT, KEY_NAMES } from '../providers/cloudflare.js'
+import * as adapter from '../providers/cloudflare.js'
+import { readProvider } from './provider-test.js'
+const { routeFor, DEFAULT_ENDPOINT, KEY_NAMES } = adapter
+const read = (ctx, route) => readProvider(adapter, ctx, route)
 import { currentUtcMonth } from '../providers/shared.js'
 
 const ROUTE = {

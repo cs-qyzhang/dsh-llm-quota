@@ -8,7 +8,8 @@
  * accounting total means available prepaid credit.
  */
 
-import { decimalAmount, fetchJson, nowIso, resolveKey, unavailable } from './shared.js'
+import { decimalAmount } from './shared.js'
+import { cycleView } from './view-helpers.js'
 
 export const kind = 'xai'
 export const DEFAULT_ENDPOINT = 'https://management-api.x.ai'
@@ -25,19 +26,39 @@ export function routeFor(baseURL) {
   return undefined
 }
 
-export async function read(ctx, route) {
-  const key = await resolveKey(ctx, route.keyNames)
-  if (!key) return unavailable(route, 'missing-management-key')
+export const view = {
+  preset: 'credits', title: 'xAI', errors: {
+    'missing-credential': { key: 'missingManagementKey' },
+    'missing-management-key': { key: 'missingManagementKey' },
+  },
+  credentials: [{ id: 'xai-key', refs: MANAGEMENT_KEY_NAMES, label: { key: 'xaiKey' }, hint: { key: 'xaiKeyHint' }, placeholder: { key: 'xaiKeyPlaceholder' } }],
+}
+
+export function route({ inference }) {
+  const match = routeFor(inference.baseURL)
+  return match ? { kind, ...match, keyNames: MANAGEMENT_KEY_NAMES } : undefined
+}
+
+export function normalizeOverride({ override }) {
+  if (override.keyNames === undefined) override.keyNames = MANAGEMENT_KEY_NAMES
+  return override
+}
+
+export const present = cycleView
+
+export async function read({ route, credentials, http, nowIso }, _route) {
+  const key = await credentials.resolve(route.keyNames)
+  if (!key) return { reason: 'missing-management-key' }
 
   const headers = { Authorization: `Bearer ${key}`, Accept: 'application/json' }
   const base = route.endpoint ?? DEFAULT_ENDPOINT
-  const validation = await fetchJson(`${base}/auth/management-keys/validation`, { headers })
+  const validation = await http.json(`${base}/auth/management-keys/validation`, { headers })
   const teamId = teamIdOf(validation)
   if (!teamId) throw new Error('management key is not team-scoped')
 
   const [balance, preview] = await Promise.all([
-    fetchJson(`${base}/v1/billing/teams/${teamId}/prepaid/balance`, { headers }),
-    fetchJson(`${base}/v1/billing/teams/${teamId}/postpaid/invoice/preview`, { headers }).catch(() => undefined),
+    http.json(`${base}/v1/billing/teams/${teamId}/prepaid/balance`, { headers }),
+    http.json(`${base}/v1/billing/teams/${teamId}/postpaid/invoice/preview`, { headers }).catch(() => undefined),
   ])
 
   const totalCents = centsOf(balance?.total?.val)

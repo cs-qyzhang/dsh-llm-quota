@@ -9,7 +9,9 @@
  * spend from the daily usage history.
  */
 
-import { currentUtcMonth, decimalAmount, fetchJson, nowIso, resolveKey, unavailable, walletBalance } from './shared.js'
+import { currentUtcMonth, decimalAmount, walletBalance } from './shared.js'
+import { mergeNames } from './view-helpers.js'
+import { cycleView } from './view-helpers.js'
 
 export const kind = 'cloudflare'
 export const DEFAULT_ENDPOINT = 'https://api.cloudflare.com/client/v4'
@@ -31,10 +33,25 @@ export function routeFor(baseURL) {
   return undefined
 }
 
-export async function read(ctx, route) {
-  const key = await resolveKey(ctx, route.keyNames?.length ? route.keyNames : KEY_NAMES)
-  const accountId = await resolveKey(ctx, ['CLOUDFLARE_ACCOUNT_ID'])
-  if (!key || !accountId) return unavailable(route, 'missing-credential')
+export const view = {
+  preset: 'credits', title: 'Cloudflare', errors: { 'missing-credential': { key: 'missingCloudflareCredential' } },
+  credentials: [
+    { id: 'cloudflare-token', refs: KEY_NAMES, label: { key: 'cloudflareToken' }, hint: { key: 'cloudflareTokenHint' }, placeholder: { key: 'cloudflareTokenPlaceholder' } },
+    { id: 'cloudflare-account', refs: ['CLOUDFLARE_ACCOUNT_ID'], label: { key: 'cloudflareAccount' }, hint: { key: 'cloudflareAccountHint' }, placeholder: { key: 'cloudflareAccountPlaceholder' } },
+  ],
+}
+
+export function route({ inference }) {
+  const match = routeFor(inference.baseURL)
+  return match ? { kind, ...match, keyNames: mergeNames(KEY_NAMES, inference.keyNames) } : undefined
+}
+
+export const present = cycleView
+
+export async function read({ route, credentials, http, nowIso }, _route) {
+  const key = await credentials.resolve(route.keyNames?.length ? route.keyNames : KEY_NAMES)
+  const accountId = await credentials.resolve(['CLOUDFLARE_ACCOUNT_ID'])
+  if (!key || !accountId) return { reason: 'missing-credential' }
 
   const headers = { Authorization: `Bearer ${key}`, Accept: 'application/json' }
   const base = route.endpoint ?? DEFAULT_ENDPOINT
@@ -43,7 +60,7 @@ export async function read(ctx, route) {
   // Transport/HTTP failures are tolerated per leg; malformed payloads throw.
   let balanceError
   let balanceResult
-  const balanceResponse = await tryFetchJson(`${root}/credit-balance`, { headers })
+  const balanceResponse = await tryFetchJson(http, `${root}/credit-balance`, { headers })
   if (balanceResponse.error) {
     balanceError = balanceResponse.error
   } else {
@@ -54,7 +71,7 @@ export async function read(ctx, route) {
   let cycleUsage
   const { startIso, endIso } = currentUtcMonth()
   const query = `value_grouping_window=day&start_time=${Date.parse(startIso)}&end_time=${Date.parse(endIso)}`
-  const usageResponse = await tryFetchJson(`${root}/usage-history?${query}`, { headers })
+  const usageResponse = await tryFetchJson(http, `${root}/usage-history?${query}`, { headers })
   if (usageResponse.error) {
     usageError = usageResponse.error
   } else {
@@ -89,9 +106,9 @@ export async function read(ctx, route) {
 }
 
 /** Return the JSON payload or the transport error instead of throwing. */
-async function tryFetchJson(url, init) {
+async function tryFetchJson(http, url, init) {
   try {
-    return { payload: await fetchJson(url, init) }
+    return { payload: await http.json(url, init) }
   } catch (error) {
     return { error }
   }

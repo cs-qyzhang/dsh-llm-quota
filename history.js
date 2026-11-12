@@ -21,21 +21,25 @@ export function defaultHistoryPath(env = process.env, home = homedir()) {
   return join(root, 'data', 'llm-quota-history.sqlite')
 }
 
-/** Extract only values whose changes represent a balance/quota change. */
-export function historyPoint(value) {
-  if (!value || value.ok !== true) return undefined
+const DEFAULT_HISTORY = [
+  ...AMOUNT_FIELDS.map((key) => ({ key, path: key, unit: 'currency' })),
+  ...WINDOW_FIELDS.map((key) => ({ key, path: `${key}.remainingPercent`, unit: 'percent' })),
+  ...['month', 'compensation'].map((key) => ({ key: `plan.${key}`, path: `plan.${key}.remainingPercent`, unit: 'percent' })),
+]
+
+function atPath(value, path) {
+  let current = value
+  for (const key of path.split('.')) current = current?.[key]
+  return current
+}
+
+/** Extract metrics described by the provider's view declaration. */
+export function historyPoint(value, spec = DEFAULT_HISTORY) {
+  if (!value || value.ok !== true || !Array.isArray(spec)) return undefined
   const metrics = {}
-  for (const field of AMOUNT_FIELDS) {
-    const metric = numericValue(value[field])
-    if (metric !== undefined) metrics[field] = metric
-  }
-  for (const field of WINDOW_FIELDS) {
-    const metric = numericValue(value[field]?.remainingPercent)
-    if (metric !== undefined) metrics[field] = metric
-  }
-  for (const field of ['month', 'compensation']) {
-    const metric = numericValue(value.plan?.[field]?.remainingPercent)
-    if (metric !== undefined) metrics[`plan.${field}`] = metric
+  for (const metric of spec) {
+    const number = numericValue(atPath(value, metric.path))
+    if (number !== undefined) metrics[metric.key] = number
   }
   if (Object.keys(metrics).length === 0) return undefined
 
@@ -186,8 +190,8 @@ export function createHistoryStore(options) {
   }
 
   return {
-    async record(key, value) {
-      const point = historyPoint(value)
+    async record(key, value, spec) {
+      const point = historyPoint(value, spec)
       if (!point) return false
       open()
       const cutoff = now() - retentionMs
@@ -239,7 +243,7 @@ export function createHistoryCollector(options) {
           const provider = providers[cursor]
           cursor += 1
           try {
-            const route = options.resolveRoute(options.ctx, provider, options.overrides)
+            const route = await options.resolveRoute(options.ctx, provider, options.overrides)
             if (!route || route.reason) continue
             await options.readRoute(route, { force: true })
           } catch {

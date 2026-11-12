@@ -2,18 +2,36 @@
  * DeepSeek API Key balance (pay-as-you-go).
  */
 
-import { fetchJson, nowIso, resolveKey, unavailable, walletBalance } from './shared.js'
+import { walletBalance } from './shared.js'
 
 export const kind = 'deepseek'
 export const hosts = {
   'api.deepseek.com': 'https://api.deepseek.com/user/balance',
 }
 
-export async function read(ctx, route) {
-  const key = await resolveKey(ctx, route.keyNames)
-  if (!key) return unavailable(route, 'missing-credential')
+export const services = ['launchEnvironment']
+export const view = { preset: 'balance', title: { key: 'balanceTitle' } }
 
-  const json = await fetchJson(route.endpoint, {
+export function route({ provider, profile, inference, services }) {
+  if (provider !== 'deepseek-official') return undefined
+  const baseURL = inference.baseURL ?? services.launchEnvironment?.get('DEEPSEEK_BASE_URL')?.value ?? 'https://api.deepseek.com/anthropic'
+  let url
+  try {
+    url = new URL(baseURL)
+  } catch {
+    return undefined
+  }
+  if (url.protocol !== 'https:' || url.username || url.password) return undefined
+  return url.hostname === 'api.deepseek.com'
+    ? { kind, endpoint: hosts['api.deepseek.com'], keyNames: inference.keyNames }
+    : undefined
+}
+
+export async function read({ route, credentials, http, nowIso }, _route) {
+  const key = await credentials.resolve(route.keyNames)
+  if (!key) return { reason: 'missing-credential' }
+
+  const json = await http.json(route.endpoint, {
     headers: { Authorization: `Bearer ${key}` },
   })
   const infos = Array.isArray(json?.balance_infos) ? json.balance_infos : []

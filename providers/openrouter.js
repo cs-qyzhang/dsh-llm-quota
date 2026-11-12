@@ -3,18 +3,17 @@
  * been purchased and consumed, so the remaining balance is the difference.
  */
 
-import { fetchJson, nowIso, resolveKey, unavailable } from './shared.js'
-
 export const kind = 'openrouter'
+export const view = { preset: 'credits', title: 'OpenRouter' }
 export const hosts = {
   'openrouter.ai': 'https://openrouter.ai/api/v1/credits',
 }
 
-export async function read(ctx, route) {
-  const key = await resolveKey(ctx, route.keyNames)
-  if (!key) return unavailable(route, 'missing-credential')
+export async function read({ route, credentials, http, nowIso }) {
+  const key = await credentials.resolve(route.keyNames)
+  if (!key) return { reason: 'missing-credential' }
 
-  const json = await fetchJson(route.endpoint, {
+  const json = await http.json(route.endpoint, {
     headers: { Authorization: `Bearer ${key}` },
   })
   const totalCredits = numberOf(json?.data?.total_credits)

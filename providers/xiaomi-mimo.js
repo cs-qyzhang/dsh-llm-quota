@@ -11,15 +11,7 @@
  * the provider type is known, only calls the matching console endpoints.
  */
 
-import {
-  clampPercent,
-  fetchJson,
-  nowIso,
-  resolveKey,
-  toIso,
-  unavailable,
-  walletBalance,
-} from './shared.js'
+import { clampPercent, nowIso, toIso, walletBalance } from './shared.js'
 
 export const kind = 'xiaomi-mimo'
 export const hosts = {}
@@ -59,9 +51,75 @@ export function billingMode(provider, baseURL) {
   return undefined
 }
 
-export async function read(ctx, route) {
-  const cookie = await resolveKey(ctx, route.keyNames)
-  if (!cookie) return unavailable(route, 'missing-cookie')
+export const view = {
+  preset: 'plan', title: { key: 'mimoTitle' },
+  errors: { 'missing-cookie': { key: 'missingCookie' } },
+  credentials: [{ id: 'mimo-cookie', refs: COOKIE_NAMES, label: { key: 'mimoCookie' }, hint: { key: 'mimoCookieHint' }, placeholder: { key: 'mimoCookiePlaceholder' } }],
+  history: [
+    { key: 'amount', path: 'amount', unit: 'currency', label: { key: 'metricAmount' } },
+    { key: 'plan', path: 'plan.remainingPercent', unit: 'percent', label: { key: 'metricPlan' } },
+    { key: 'plan.month', path: 'plan.month.remainingPercent', unit: 'percent', label: { key: 'mimoMonth' } },
+    { key: 'plan.compensation', path: 'plan.compensation.remainingPercent', unit: 'percent', label: { key: 'mimoCompensation' } },
+  ],
+}
+
+export function route({ provider, profile, inference }) {
+  try {
+    const url = new URL(inference.baseURL)
+    if (url.protocol !== 'https:' || (url.hostname !== XIAOMI_HOST && !url.hostname.endsWith(`.${XIAOMI_HOST}`))) return undefined
+  } catch { return undefined }
+  return { kind, mode: billingMode(provider, inference.baseURL), endpoint: DEFAULT_ENDPOINT, keyNames: profile.cookieEnv ? [profile.cookieEnv] : COOKIE_NAMES }
+}
+
+export function normalizeOverride({ override, provider }) {
+  if (override.mode === undefined) override.mode = billingMode(provider)
+  return override
+}
+
+export function present(data, { message, formatAmount, formatWindow, resetLabel, row }) {
+  const title = message('mimoTitle')
+  let heading = [title]
+  if (data.mode === MODE_BALANCE) heading = [...heading, ' · ', message('mimoPayg')]
+  else if (data.mode === MODE_PLAN) heading = [...heading, ' · ', message('mimoTokenPlan'), data.plan?.name ? ` (${data.plan.name})` : '']
+  else if (data.plan?.name) heading = [...heading, ' · ', data.plan.name]
+  const compact = []
+  const badge = []
+  if (data.amount !== undefined) {
+    compact.push(message('balance', { amount: formatAmount(data.currency, data.amount) }))
+    badge.push(formatAmount(data.currency, data.amount))
+  }
+  if (data.plan && Number.isFinite(data.plan.remainingPercent)) {
+    compact.push(message('mimoPlanLeft', { percent: data.plan.remainingPercent }))
+    badge.push(message('badgePlan', { percent: data.plan.remainingPercent }))
+  }
+  const rows = []
+  for (const [key, label] of [['amount', 'mimoBalance'], ['cashBalance', 'mimoCash']]) {
+    if (data[key] !== undefined) rows.push(row(label, formatAmount(data.currency, data[key])))
+  }
+  for (const [key, label] of [['giftBalance', 'mimoGift'], ['frozenBalance', 'mimoFrozen']]) {
+    if (Number.parseFloat(data[key]) > 0) rows.push(row(label, formatAmount(data.currency, data[key])))
+  }
+  for (const [label, window] of [['mimoPlan', data.plan], ['mimoMonth', data.plan?.month], ['mimoCompensation', data.plan?.compensation]]) {
+    if (window && Number.isFinite(window.remainingPercent)) rows.push(row(label, formatWindow(window), resetLabel(window.resetAt)))
+  }
+  const joinParts = (parts) => parts.flatMap((entry, index) => index === 0 ? [entry] : [' · ', entry])
+  return {
+    title: heading,
+    gauge: data.mode !== MODE_BALANCE,
+    compact: compact.length ? joinParts(compact) : message('error'),
+    badge: badge.length ? joinParts(badge) : '',
+    rows,
+  }
+}
+
+export async function read(context) {
+  const { route, credentials, http, nowIso } = context
+  const request = async (url, headers) => {
+    try { return { value: unwrap(await http.json(url, { headers })) } }
+    catch (error) { return { error } }
+  }
+  const cookie = await credentials.resolve(route.keyNames?.length ? route.keyNames : COOKIE_NAMES)
+  if (!cookie) return { reason: 'missing-cookie' }
 
   const base = baseEndpoint(route.endpoint)
   const headers = {
@@ -70,12 +128,12 @@ export async function read(ctx, route) {
     'x-timezone': timezone(),
   }
 
-  if (route.mode === MODE_BALANCE) return readBalance(route, base, headers)
-  if (route.mode === MODE_PLAN) return readPlan(route, base, headers)
-  return readAll(route, base, headers)
+  if (route.mode === MODE_BALANCE) return readBalance(route, base, headers, request)
+  if (route.mode === MODE_PLAN) return readPlan(route, base, headers, request)
+  return readAll(route, base, headers, request)
 }
 
-async function readBalance(route, base, headers) {
+async function readBalance(route, base, headers, request) {
   const [balance, profile] = await Promise.all([
     request(`${base}/balance`, headers),
     request(`${base}/userProfile`, headers),
@@ -101,7 +159,7 @@ async function readBalance(route, base, headers) {
   return result
 }
 
-async function readPlan(route, base, headers) {
+async function readPlan(route, base, headers, request) {
   const [usage, detail] = await Promise.all([
     request(`${base}/tokenPlan/usage`, headers),
     request(`${base}/tokenPlan/detail`, headers),
@@ -118,7 +176,7 @@ async function readPlan(route, base, headers) {
   return result
 }
 
-async function readAll(route, base, headers) {
+async function readAll(route, base, headers, request) {
   const [balance, usage, detail, profile] = await Promise.all([
     request(`${base}/balance`, headers),
     request(`${base}/tokenPlan/usage`, headers),
@@ -157,14 +215,6 @@ function baseResult(route, mode) {
   }
   if (mode) result.mode = mode
   return result
-}
-
-async function request(url, headers) {
-  try {
-    return { value: unwrap(await fetchJson(url, { headers })) }
-  } catch (error) {
-    return { error }
-  }
 }
 
 function unwrap(json) {

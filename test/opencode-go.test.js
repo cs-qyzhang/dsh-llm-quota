@@ -1,12 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {
-  DEFAULT_ENDPOINT,
-  KEY_NAMES,
-  kind,
-  read,
-  routeFor,
-} from '../providers/opencode-go.js'
+import * as adapter from '../providers/opencode-go.js'
+import { readProvider } from './provider-test.js'
+const { DEFAULT_ENDPOINT, KEY_NAMES, kind, routeFor } = adapter
+const read = (ctx, route) => readProvider(adapter, ctx, route)
 
 const USAGE_RESPONSE = {
   usage: {

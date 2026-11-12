@@ -10,15 +10,16 @@
  * lags live usage for a short while.
  */
 
-import { currentUtcMonth, decimalAmount, fetchJson, nowIso, resolveKey, unavailable } from './shared.js'
+import { currentUtcMonth, decimalAmount } from './shared.js'
 
 export const kind = 'openai'
 export const DEFAULT_ENDPOINT = 'https://api.openai.com/v1/organization/costs'
 export const KEY_NAMES = ['OPENAI_ADMIN_KEY', 'OPENAI_ADMIN_API_KEY']
 
 const USAGE_ENDPOINT = 'https://api.openai.com/v1/organization/usage/completions'
-// Guard against a server that keeps handing out cursors forever.
-const MAX_PAGES = 5
+// Guard against a server that keeps handing out cursors forever. The full
+// month should not be truncated silently when the guard is reached.
+const MAX_PAGES = 100
 
 export const hosts = {
   'api.openai.com': DEFAULT_ENDPOINT,
@@ -32,9 +33,19 @@ export function routeFor(baseURL) {
   return undefined
 }
 
-export async function read(ctx, route) {
-  const key = await resolveKey(ctx, route.keyNames?.length ? route.keyNames : KEY_NAMES)
-  if (!key) return unavailable(route, 'missing-credential')
+export const view = {
+  preset: 'usage', title: 'OpenAI', errors: { 'missing-credential': { key: 'missingAdminKey' } },
+  credentials: [{ id: 'admin-key', refs: ['ANTHROPIC_ADMIN_KEY', 'ANTHROPIC_ADMIN_API_KEY', ...KEY_NAMES], label: { key: 'adminKey' }, hint: { key: 'adminKeyHint' }, placeholder: { key: 'adminKeyPlaceholder' } }],
+}
+
+export function route({ inference }) {
+  const match = routeFor(inference.baseURL)
+  return match ? { kind, ...match } : undefined
+}
+
+export async function read({ route, credentials, http, nowIso }, _route) {
+  const key = await credentials.resolve(route.keyNames?.length ? route.keyNames : KEY_NAMES)
+  if (!key) return { reason: 'missing-credential' }
 
   const { startIso, endIso } = currentUtcMonth()
   const query = `start_time=${toUnixSeconds(startIso)}&end_time=${toUnixSeconds(endIso)}&bucket_width=1d`
@@ -44,8 +55,11 @@ export async function read(ctx, route) {
   // Token counts are best-effort extras; a failing usage call must not sink
   // the cost result.
   const [pages, usage] = await Promise.all([
-    fetchCostPages(`${base}?${query}`, headers),
-    fetchJson(`${USAGE_ENDPOINT}?${query}`, { headers }).catch(() => undefined),
+    fetchPages(http, `${base}?${query}`, headers),
+    http.json(`${USAGE_ENDPOINT}?${query}`, { headers }).then(async (first) => {
+      const rest = await fetchPages(http, `${USAGE_ENDPOINT}?${query}`, headers, 'data', first)
+      return { ...first, data: rest.flat() }
+    }).catch(() => undefined),
   ])
 
   let total = 0
@@ -70,19 +84,23 @@ export async function read(ctx, route) {
   return result
 }
 
-/** Walk the costs pagination cursors and collect every page's result rows. */
-async function fetchCostPages(url, headers) {
+/** Walk every page, rejecting cursor loops or truncated reports. */
+async function fetchPages(http, url, headers, field = 'results', first) {
   const pages = []
-  let pageUrl = url
+  const cursors = new Set()
   for (let page = 0; page < MAX_PAGES; page += 1) {
-    const json = await fetchJson(pageUrl, { headers })
-    if (!Array.isArray(json?.results)) throw new Error('invalid quota response')
-    pages.push(json.results)
+    const json = page === 0 && first ? first : await http.json(url, { headers })
+    if (!Array.isArray(json?.[field])) throw new Error('invalid quota response')
+    pages.push(json[field])
     const cursor = typeof json.next_page === 'string' && json.next_page ? json.next_page : undefined
-    if (!json.has_more || !cursor) return pages
-    pageUrl = `${url}&page=${encodeURIComponent(cursor)}`
+    if (!json.has_more) return pages
+    if (!cursor || cursors.has(cursor)) throw new Error('invalid quota pagination')
+    cursors.add(cursor)
+    const next = new URL(url)
+    next.searchParams.set('page', cursor)
+    url = next.toString()
   }
-  return pages
+  throw new Error('quota response exceeds pagination limit')
 }
 
 /** Best-effort token/request totals; anything unexpected just drops the extras. */

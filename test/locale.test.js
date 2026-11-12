@@ -13,6 +13,10 @@ const locales = new Map(
 )
 const en = locales.get('en')
 const client = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+const providerSources = readdirSync(new URL('../providers/', import.meta.url))
+  .filter((name) => name.endsWith('.js'))
+  .map((name) => readFileSync(new URL(`../providers/${name}`, import.meta.url), 'utf8'))
+const sources = [client, ...providerSources].join('\n')
 
 function placeholders(value) {
   return [...value.matchAll(/\{(\w+)\}/g)].map((match) => match[1]).sort()
@@ -52,9 +56,9 @@ test('every locale defines the same keys with the same placeholders as en', () =
   }
 })
 
-test('every message key is referenced in client.js (no dead keys)', () => {
+test('every message key is referenced by the Client or a Provider (no dead keys)', () => {
   for (const key of Object.keys(en.messages)) {
-    assert.ok(client.includes(`'${key}'`), `messages.${key} is never referenced in client.js`)
+    assert.ok(sources.includes(`'${key}'`), `messages.${key} is never referenced`)
   }
 })
 

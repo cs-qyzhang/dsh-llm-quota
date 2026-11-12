@@ -5,7 +5,7 @@
  * Kimi For Coding subscription quota handled by `kimi.js`.
  */
 
-import { fetchJson, nowIso, resolveKey, unavailable, walletBalance } from './shared.js'
+import { walletBalance } from './shared.js'
 
 export const kind = 'moonshot'
 export const hosts = {
@@ -13,11 +13,13 @@ export const hosts = {
   'api.moonshot.ai': 'https://api.moonshot.ai/v1/users/me/balance',
 }
 
-export async function read(ctx, route) {
-  const key = await resolveKey(ctx, route.keyNames)
-  if (!key) return unavailable(route, 'missing-credential')
+export const view = { preset: 'balance', title: { key: 'moonshotTitle' } }
 
-  const json = await fetchJson(route.endpoint, {
+export async function read({ route, credentials, http, nowIso }, _route) {
+  const key = await credentials.resolve(route.keyNames)
+  if (!key) return { reason: 'missing-credential' }
+
+  const json = await http.json(route.endpoint, {
     headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
   })
   if (json?.status === false || (json?.code !== undefined && Number(json.code) !== 0)) {

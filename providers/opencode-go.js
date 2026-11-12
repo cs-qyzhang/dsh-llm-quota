@@ -18,7 +18,8 @@
  * by URL path via `routeFor` (integration side, `resolve.js`).
  */
 
-import { clampPercent, fetchJson, nowIso, resolveKey, toIso, unavailable } from './shared.js'
+import { clampPercent, toIso } from './shared.js'
+import { mergeNames } from './view-helpers.js'
 
 export const kind = 'opencode-go'
 export const hosts = {}
@@ -43,12 +44,19 @@ export function routeFor(baseURL) {
   return { endpoint: DEFAULT_ENDPOINT }
 }
 
-export async function read(ctx, route) {
-  const key = await resolveKey(ctx, route.keyNames ?? KEY_NAMES)
-  if (!key) return unavailable(route, 'missing-credential')
+export function route({ inference }) {
+  const match = routeFor(inference.baseURL)
+  return match ? { kind, ...match, keyNames: mergeNames(KEY_NAMES, inference.keyNames) } : undefined
+}
+
+export const view = { preset: 'plan', title: 'OpenCode Go' }
+
+export async function read({ route, credentials, http, nowIso }, _route) {
+  const key = await credentials.resolve(route.keyNames ?? KEY_NAMES)
+  if (!key) return { reason: 'missing-credential' }
 
   const endpoint = route.endpoint ?? DEFAULT_ENDPOINT
-  const json = await fetchJson(endpoint, {
+  const json = await http.json(endpoint, {
     headers: { Authorization: `Bearer ${key}` },
   })
   const usage = json?.usage

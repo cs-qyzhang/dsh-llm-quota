@@ -16,13 +16,14 @@ import {
   historyIntervalMs,
   sampleHistoryPoints,
 } from './history.js'
-import { readQuota } from './providers/index.js'
+import { builtinProviders, createProviderRegistry, readQuota } from './providers/index.js'
 import { resolveRoute } from './providers/resolve.js'
 import { REQUEST_TIMEOUT_MS, nowIso, unavailable } from './providers/shared.js'
 
 const ROUTE_PATH = '/api/llm-quota'
 const HISTORY_ROUTE_PATH = '/api/llm-quota/history'
 const I18N_ROUTE_PATH = '/api/llm-quota/i18n'
+const VIEWS_ROUTE_PATH = '/api/llm-quota/views'
 const LANGUAGE_ID = /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/
 const CACHE_TTL_MS = 30_000
 const CACHE_MAX_ENTRIES = 50
@@ -37,6 +38,7 @@ const HISTORY_RANGES = {
 
 export const Config = z.object({
   providers: z.dict(z.object({})).default({}).volatile(),
+  providerModules: z.array(z.string()).default([]).volatile(),
   cacheSeconds: z.number().default(30).volatile(),
   history: z.boolean().default(true).volatile(),
   historyIntervalSeconds: z.number().default(30).volatile(),
@@ -67,6 +69,7 @@ export function apply(ctx, config = {}) {
     ? undefined
     : createHistoryStore({ filePath: defaultHistoryPath() })
   const options = {
+    registry: createProviderRegistry({ plugins: builtinProviders(), modules: configValue(config.providerModules) ?? [] }),
     overrides,
     ttl,
     cache: new Map(),
@@ -95,6 +98,21 @@ export function apply(ctx, config = {}) {
     'llm-quota: i18n route',
   )
 
+  ctx.effect(
+    () => ctx.connection.fetch.register({
+      path: VIEWS_ROUTE_PATH,
+      methods: ['GET'],
+      requestBody: 'buffered',
+      fetch: async () => {
+        await options.registry.ready
+        const failure = options.registry.readyError
+        if (failure) return send({ ok: false, reason: 'error', error: errorText(failure) })
+        return send({ ok: true, ...options.registry.manifest() })
+      },
+    }),
+    'llm-quota: provider views',
+  )
+
   if (!history) return
   ctx.effect(
     () => ctx.connection.fetch.register({
@@ -108,7 +126,10 @@ export function apply(ctx, config = {}) {
   const collector = createHistoryCollector({
     ctx,
     overrides,
-    resolveRoute,
+    resolveRoute: async (context, provider) => {
+      await options.registry.ready
+      return resolveRoute(context, provider, overrides, options.registry)
+    },
     intervalMs: historyIntervalMs(configValue(config.historyIntervalSeconds)),
     readRoute: (route, { force } = {}) => readQuotaRoute(ctx, route, options, force),
   })
@@ -129,12 +150,13 @@ async function serve(ctx, request, options) {
 
   let route
   try {
-    route = resolveRoute(ctx, provider, options.overrides)
+    await options.registry.ready
+    route = await resolveRoute(ctx, provider, options.overrides, options.registry)
   } catch (error) {
     return send(failure(provider, error))
   }
   if (!route) return send({ ok: false, provider, reason: 'unsupported' })
-  if (route.reason) return send(unavailable(route, route.reason))
+  if (route.reason) return send({ ...unavailable(route, route.reason), ...options.registry.routeFailure(route) })
   return send(await readQuotaRoute(ctx, route, options))
 }
 
@@ -191,12 +213,13 @@ async function serveHistory(ctx, request, options) {
   }
   let route
   try {
-    route = resolveRoute(ctx, provider, options.overrides)
+    await options.registry.ready
+    route = await resolveRoute(ctx, provider, options.overrides, options.registry)
   } catch (error) {
     return send(failure(provider, error))
   }
   if (!route) return send({ ok: false, provider, reason: 'unsupported' })
-  if (route.reason) return send(unavailable(route, route.reason))
+  if (route.reason) return send({ ...unavailable(route, route.reason), ...options.registry.routeFailure(route) })
 
   const rangeMs = hours ? Number(hours) * 3_600_000 : Number(days) * 86_400_000
   const since = new Date(Date.now() - rangeMs).toISOString()
@@ -234,13 +257,13 @@ async function readQuotaRoute(ctx, route, options, force = false) {
   try {
     let task = options.pending.get(route.cacheKey)
     if (!task) {
-      task = (async () => {
+      const pendingTask = (async () => {
         try {
-          const value = await withTimeout(readQuota(ctx, route), REQUEST_TIMEOUT_MS)
+          const value = await withTimeout((signal) => readQuota(options.registry, ctx, route, signal), REQUEST_TIMEOUT_MS)
           if (value?.ok === true) {
             if (options.history) {
               try {
-                await options.history.record(route.cacheKey, value)
+                await options.history.record(route.cacheKey, value, options.registry.historySpec(route))
               } catch {
                 // History persistence must never make an otherwise valid quota fail.
               }
@@ -251,15 +274,16 @@ async function readQuotaRoute(ctx, route, options, force = false) {
           }
           return value
         } finally {
-          if (options.pending.get(route.cacheKey) === task) options.pending.delete(route.cacheKey)
+          if (options.pending.get(route.cacheKey) === pendingTask) options.pending.delete(route.cacheKey)
         }
       })()
-      options.pending.set(route.cacheKey, task)
+      options.pending.set(route.cacheKey, pendingTask)
+      task = pendingTask
     }
     return await task
   } catch (error) {
     if (cached) return { ...cached.value, stale: true }
-    return failure(route.provider, error, route.kind)
+    return { ...options.registry.failure(route, error), ...failure(route.provider, error, route.kind) }
   }
 }
 
@@ -271,12 +295,12 @@ function writeCache(cache, key, value) {
   }
 }
 
-function withTimeout(promise, milliseconds) {
-  let timer
-  const deadline = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error('quota request timed out')), milliseconds)
-  })
-  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer))
+function withTimeout(read, milliseconds) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(new Error('quota request timed out')), milliseconds)
+  return Promise.resolve()
+    .then(() => read(controller.signal))
+    .finally(() => clearTimeout(timer))
 }
 
 function defaultProvider(ctx) {

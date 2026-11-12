@@ -7,7 +7,8 @@
  * (`tokenplan/personal/api/v2/usage`) and requires a console token credential.
  */
 
-import { clampPercent, fetchJson, nowIso, resolveKey, toIso, unavailable } from './shared.js'
+import { clampPercent, toIso } from './shared.js'
+import { planView } from './view-helpers.js'
 
 export const kind = 'qwen'
 export const hosts = {}
@@ -44,9 +45,30 @@ export function routeFor(baseURL) {
   }
 }
 
-export async function read(ctx, route) {
-  const token = await resolveKey(ctx, route.keyNames)
-  if (!token) return unavailable(route, 'missing-console-token')
+export function route({ inference }) {
+  const match = routeFor(inference.baseURL)
+  return match ? { kind, ...match, keyNames: TOKEN_NAMES } : undefined
+}
+
+export function normalizeOverride({ override }) {
+  if (override.keyNames === undefined) override.keyNames = TOKEN_NAMES
+  return override
+}
+
+export const view = {
+  preset: 'plan', title: { key: 'qwenTitle' },
+  errors: { 'missing-console-token': { key: 'missingConsoleToken' } },
+  credentials: [{ id: 'qwen-token', refs: TOKEN_NAMES, label: { key: 'qwenToken' }, hint: { key: 'qwenTokenHint' }, placeholder: { key: 'qwenTokenPlaceholder' } }],
+  history: [{ key: 'plan', path: 'plan.remainingPercent', unit: 'percent', label: { key: 'metricPlan' } }],
+}
+
+export function present(data, helpers) {
+  return { ...planView(data, helpers, { compact: 'qwenPlanLeft', label: 'qwenMonthly' }), title: [{ key: 'qwenTitle' }, ' · ', { key: 'qwenTokenPlan' }] }
+}
+
+export async function read({ route, credentials, http, nowIso }, _route) {
+  const token = await credentials.resolve(route.keyNames)
+  if (!token) return { reason: 'missing-console-token' }
 
   const params = JSON.stringify({
     Api: API_NAME,
@@ -61,7 +83,7 @@ export async function read(ctx, route) {
       },
     },
   })
-  const json = await fetchJson(route.endpoint, {
+  const json = await http.json(route.endpoint, {
     method: 'POST',
     headers: {
       Accept: '*/*',

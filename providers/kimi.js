@@ -3,18 +3,20 @@
  * Moonshot open-platform balance API.
  */
 
-import { clampPercent, fetchJson, nowIso, resolveKey, toIso, unavailable } from './shared.js'
+import { clampPercent, toIso } from './shared.js'
 
 export const kind = 'kimi'
 export const hosts = {
   'api.kimi.com': 'https://api.kimi.com/coding/v1/usages',
 }
 
-export async function read(ctx, route) {
-  const key = await resolveKey(ctx, route.keyNames)
-  if (!key) return unavailable(route, 'missing-credential')
+export const view = { preset: 'plan', title: 'Kimi' }
 
-  const json = await fetchJson(route.endpoint, {
+export async function read({ route, credentials, http, nowIso }, _route) {
+  const key = await credentials.resolve(route.keyNames)
+  if (!key) return { reason: 'missing-credential' }
+
+  const json = await http.json(route.endpoint, {
     headers: { Authorization: `Bearer ${key}` },
   })
   const usages = json?.usages ?? {}

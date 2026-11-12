@@ -4,12 +4,18 @@
  * subscription key used for inference.
  */
 
-import { clampPercent, fetchJson, nowIso, resolveKey, toIso, unavailable } from './shared.js'
+import { clampPercent, toIso } from './shared.js'
 
 export const kind = 'minimax'
 export const hosts = {
   'api.minimax.io': 'https://api.minimax.io/v1/token_plan/remains',
   'api.minimaxi.com': 'https://api.minimaxi.com/v1/token_plan/remains',
+}
+
+export const view = { preset: 'plan', title: 'MiniMax' }
+
+export function present(data) {
+  return { title: data.model ? `MiniMax · ${data.model}` : 'MiniMax' }
 }
 
 const PLAN_PATHS = ['/v1/token_plan/remains', '/v1/coding_plan/remains']
@@ -30,11 +36,11 @@ const WEEKLY = {
   remainsField: 'weekly_remains_time',
 }
 
-export async function read(ctx, route) {
-  const key = await resolveKey(ctx, route.keyNames)
-  if (!key) return unavailable(route, 'missing-credential')
+export async function read({ route, credentials, http, nowIso }, _route) {
+  const key = await credentials.resolve(route.keyNames)
+  if (!key) return { reason: 'missing-credential' }
 
-  const json = await readRemains(route.endpoint, key)
+  const json = await readRemains(http, route.endpoint, key)
   const row = canonicalRow(json?.model_remains)
   const fiveHour = windowOf(row, FIVE_HOUR)
   const weekly = windowOf(row, WEEKLY)
@@ -57,11 +63,11 @@ export async function read(ctx, route) {
  * but not every subscription key is accepted by both, so try the documented
  * sibling before failing. Custom endpoints outside these paths are used as-is.
  */
-async function readRemains(endpoint, key) {
+async function readRemains(http, endpoint, key) {
   let lastError
   for (const candidate of candidatesFor(endpoint)) {
     try {
-      const json = await fetchJson(candidate, {
+      const json = await http.json(candidate, {
         headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
       })
       checkBusinessCode(json)

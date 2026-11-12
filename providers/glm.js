@@ -2,7 +2,7 @@
  * GLM Coding Plan quota (Z.AI international and Zhipu CN).
  */
 
-import { clampPercent, fetchJson, nowIso, resolveKey, toIso, unavailable } from './shared.js'
+import { clampPercent, toIso } from './shared.js'
 
 export const kind = 'glm'
 export const hosts = {
@@ -10,11 +10,18 @@ export const hosts = {
   'open.bigmodel.cn': 'https://open.bigmodel.cn/api/monitor/usage/quota/limit',
 }
 
-export async function read(ctx, route) {
-  const key = await resolveKey(ctx, route.keyNames)
-  if (!key) return unavailable(route, 'missing-credential')
+export const view = { preset: 'plan', title: 'GLM' }
 
-  const json = await fetchJson(route.endpoint, {
+export function present(data) {
+  const level = typeof data.level === 'string' && data.level ? data.level[0].toUpperCase() + data.level.slice(1) : ''
+  return { title: level ? `GLM ${level}` : 'GLM' }
+}
+
+export async function read({ route, credentials, http, nowIso }, _route) {
+  const key = await credentials.resolve(route.keyNames)
+  if (!key) return { reason: 'missing-credential' }
+
+  const json = await http.json(route.endpoint, {
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
   })
   if (json?.success === false) {

@@ -7,20 +7,22 @@
  * costs are aggregated.
  */
 
-import { currentUtcMonth, decimalAmount, fetchJson, nowIso, resolveKey, unavailable } from './shared.js'
+import { currentUtcMonth, decimalAmount } from './shared.js'
 
 export const kind = 'fireworks'
 export const hosts = {
   'api.fireworks.ai': 'https://api.fireworks.ai/v1',
 }
 
-export async function read(ctx, route) {
-  const key = await resolveKey(ctx, route.keyNames)
-  if (!key) return unavailable(route, 'missing-credential')
+export const view = { preset: 'usage', title: 'Fireworks' }
+
+export async function read({ route, credentials, http, nowIso }, _route) {
+  const key = await credentials.resolve(route.keyNames)
+  if (!key) return { reason: 'missing-credential' }
 
   const headers = { Authorization: `Bearer ${key}`, Accept: 'application/json' }
   const base = route.endpoint ?? hosts['api.fireworks.ai']
-  const accounts = await fetchJson(`${base}/accounts`, { headers })
+  const accounts = await http.json(`${base}/accounts`, { headers })
   const names = Array.isArray(accounts?.accounts)
     ? accounts.accounts
       .map((account) => account?.name)
@@ -31,7 +33,7 @@ export async function read(ctx, route) {
   const { startIso, endIso } = currentUtcMonth()
   const query = `startTime=${encodeURIComponent(startIso)}&endTime=${encodeURIComponent(endIso)}`
   const summaries = await Promise.all(names.map((name) => (
-    fetchJson(`${base}/accounts/${accountIdOf(name)}/billing/summary?${query}`, { headers })
+    http.json(`${base}/accounts/${accountIdOf(name)}/billing/summary?${query}`, { headers })
   )))
 
   let total = 0

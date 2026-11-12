@@ -6,22 +6,24 @@
  * rated cost in USD together with its credit split.
  */
 
-import { currentUtcMonth, decimalAmount, fetchJson, nowIso, resolveKey, unavailable } from './shared.js'
+import { currentUtcMonth, decimalAmount } from './shared.js'
 
 export const kind = 'baseten'
 export const hosts = {
   'inference.baseten.co': 'https://api.baseten.co/v1/billing/usage_summary',
 }
 
+export const view = { preset: 'usage', title: 'Baseten' }
+
 const SECTIONS = ['dedicated_usage', 'training_usage', 'model_apis_usage']
 
-export async function read(ctx, route) {
-  const key = await resolveKey(ctx, route.keyNames)
-  if (!key) return unavailable(route, 'missing-credential')
+export async function read({ route, credentials, http, nowIso }, _route) {
+  const key = await credentials.resolve(route.keyNames)
+  if (!key) return { reason: 'missing-credential' }
 
   const { startIso, endIso } = currentUtcMonth()
   const query = `start_date=${encodeURIComponent(startIso)}&end_date=${encodeURIComponent(endIso)}`
-  const json = await fetchJson(`${route.endpoint}?${query}`, {
+  const json = await http.json(`${route.endpoint}?${query}`, {
     headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
   })
   const usage = json && typeof json === 'object' ? json : {}

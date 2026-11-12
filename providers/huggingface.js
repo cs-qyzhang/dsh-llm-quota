@@ -15,13 +15,15 @@
  * counts in `requestCount`/`inputTokens`/`outputTokens`/`cachedInputTokens`).
  */
 
-import { currentUtcMonth, decimalAmount, fetchJson, nowIso, resolveKey, unavailable } from './shared.js'
+import { currentUtcMonth, decimalAmount } from './shared.js'
 
 export const kind = 'huggingface'
 export const hosts = {
   'router.huggingface.co': 'https://huggingface.co/api/settings/billing/usage-v2',
 }
 export const KEY_NAMES = ['HF_TOKEN', 'HUGGINGFACE_TOKEN']
+
+export const view = { preset: 'usage', title: 'Hugging Face' }
 
 // Money fields on usage rows: name -> USD divisor.
 const MONEY_FIELDS = {
@@ -37,13 +39,13 @@ const CREDITS_FIELDS = {
   creditsRemainingCents: 100,
 }
 
-export async function read(ctx, route) {
-  const key = await resolveKey(ctx, Array.isArray(route.keyNames) && route.keyNames.length > 0 ? route.keyNames : KEY_NAMES)
-  if (!key) return unavailable(route, 'missing-credential')
+export async function read({ route, credentials, http, nowIso }, _route) {
+  const key = await credentials.resolve(Array.isArray(route.keyNames) && route.keyNames.length > 0 ? route.keyNames : KEY_NAMES)
+  if (!key) return { reason: 'missing-credential' }
 
   const { startIso, endIso } = currentUtcMonth()
   const query = `startDate=${toUnixSeconds(startIso)}&endDate=${toUnixSeconds(endIso)}`
-  const json = await fetchJson(`${route.endpoint}?${query}`, {
+  const json = await http.json(`${route.endpoint}?${query}`, {
     headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
   })
 
