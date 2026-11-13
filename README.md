@@ -30,9 +30,9 @@ Displays the current model provider's remaining balance or Coding Plan quota in 
 
 ## 安装与更新 / Installation and Updates
 
-要求 Node.js `>=22.13.0`，dsh `>=0.2.1-rc.2 <0.2.2 || >=0.2.2-0 <0.2.3`。Node.js 下限用于无需额外启动参数运行历史存储使用的 `node:sqlite`。
+要求 Node.js `>=22.13.0`。
 
-Requires Node.js `>=22.13.0` and dsh `>=0.2.1-rc.2 <0.2.2 || >=0.2.2-0 <0.2.3`. The Node.js minimum allows the `node:sqlite` history store to run without extra startup flags.
+Requires Node.js `>=22.13.0`.
 
 ```bash
 dsh plugin --profile web add @cs-qyzhang/dsh-llm-quota@latest
@@ -61,12 +61,12 @@ Restart dsh or refresh the page after uninstalling.
 The plugin automatically queries quota based on the current model's provider. For complete provider IDs, supported scope, and credential requirements, see the [provider documentation](docs/providers.md#支持的额度体系) and [DSH provider list](docs/dsh-providers.md).
 
 - **凭证**：默认复用 dsh 中已有的推理凭证。需要额外控制台凭证的供应商，可在 **Plugins → Installed plugins → 模型额度 → 供应商额外凭证** 中配置；各供应商的具体要求见[供应商文档](docs/providers.md)。
-- **高级配置**：在 **Plugins → Installed plugins → 模型额度** 的「运行配置」中可调整 `cacheSeconds`、`history`、`historyDefaultRange`、`historyIntervalSeconds`，并用 JSON 编辑 `providers` 与 `providerModules`。保存会重建 Host 的路由、缓存与采集器；新增或修改自定义 Provider 的展示、文案或凭证字段后，需刷新已打开的页面以重新获取 manifest。`historyDefaultRange` 默认近 1 小时，可选近 1 / 4 / 12 / 24 小时、7 天或 30 天，重新打开浮层生效。自定义模块与手工 YAML 示例见[接入新的额度体系](docs/providers.md#接入新的额度体系)。
-- **历史数据**：默认每 30 秒采集一次，仅在 Provider 声明的额度指标变化时写入本地 SQLite。关闭 `history` 会同时停止采集、写入并移除历史查询路由。存储路径、保留策略、抽样和趋势图说明见[架构文档](docs/architecture.md#历史采集与持久化)。
+- **高级配置**：在 **Plugins → Installed plugins → 模型额度** 的「插件配置」中可调整 `queryIntervalSeconds`、`history`、`historyDefaultRange`，并用 JSON 编辑 `providers` 与 `providerModules`。保存会重建 Host 的路由、缓存与采集器；新增或修改自定义 Provider 的展示、文案或凭证字段后，需刷新已打开的页面以重新获取 manifest。`historyDefaultRange` 默认近 1 小时，可选近 1 / 4 / 12 / 24 小时、7 天或 30 天，重新打开详情生效。自定义模块与手工 YAML 示例见[接入新的额度体系](docs/providers.md#接入新的额度体系)。
+- **历史数据**：按查询间隔采集（默认 30 秒），仅在 Provider 声明的额度指标变化时写入本地 SQLite。关闭 `history` 会同时停止采集、写入并移除历史查询路由。存储路径、保留策略、抽样和趋势图说明见[架构文档](docs/architecture.md#历史采集与持久化)。
 
 - **Credentials**: Reuses inference credentials already configured in dsh by default. For providers that require additional console credentials, configure them in the plugin's additional provider credentials section. See the [provider documentation](docs/providers.md) for provider-specific requirements.
-- **Advanced configuration**: Under **Plugins → Installed plugins → Model quota**, Runtime settings exposes `cacheSeconds`, `history`, `historyDefaultRange`, `historyIntervalSeconds`, and JSON editors for `providers` and `providerModules`. Saving rebuilds the Host routes, cache, and collector; refresh an already-open page after changing a custom Provider's view, messages, or credential declarations so the Client fetches the new manifest. `historyDefaultRange` defaults to the last 1 hour, with options for the last 1 / 4 / 12 / 24 hours, 7 days, or 30 days; reopen the popup to apply it. See [adding a quota system](docs/providers.md#接入新的额度体系) for custom modules and manual YAML examples.
-- **Historical data**: Collects every 30 seconds by default and writes to local SQLite only when a Provider-declared quota metric changes. Disabling `history` stops collection and persistence and removes the history query route. See the [architecture documentation](docs/architecture.md#历史采集与持久化) for the storage path, retention policy, sampling, and trend charts.
+- **Advanced configuration**: Under **Plugins → Installed plugins → Model quota**, Plugin settings exposes `queryIntervalSeconds`, `history`, `historyDefaultRange`, and JSON editors for `providers` and `providerModules`. Saving rebuilds the Host routes, cache, and collector; refresh an already-open page after changing a custom Provider's view, messages, or credential declarations so the Client fetches the new manifest. `historyDefaultRange` defaults to the last 1 hour, with options for the last 1 / 4 / 12 / 24 hours, 7 days, or 30 days; reopen the details to apply it. See [adding a quota system](docs/providers.md#接入新的额度体系) for custom modules and manual YAML examples.
+- **Historical data**: Collects on the query interval (30 seconds by default) and writes to local SQLite only when a Provider-declared quota metric changes. Disabling `history` stops collection and persistence and removes the history query route. See the [architecture documentation](docs/architecture.md#历史采集与持久化) for the storage path, retention policy, sampling, and trend charts.
 
 ## HTTP 接口 / HTTP API
 
@@ -93,6 +93,10 @@ For common errors and their causes, see [failure reasons](docs/architecture.md#�
 npm run check
 npm test
 ```
+
+**本地 link 开发 / Local link development**：以 `link:` 方式链接本仓库做开发时，请先在本目录执行 `npm install` 安装依赖；npm 正式安装不受影响。
+
+When linking this repo for development with `link:`, run `npm install` in this directory first to install dependencies. Regular npm installs are unaffected.
 
 ## 文档 / Documentation
 

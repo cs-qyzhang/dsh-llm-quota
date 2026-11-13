@@ -37,11 +37,10 @@ const HISTORY_RANGES = {
 }
 
 export const Config = z.object({
-  providers: z.dict(z.object({})).default({}).volatile(),
+  providers: z.dict(z.dict(z.any())).default({}).volatile(),
   providerModules: z.array(z.string()).default([]).volatile(),
-  cacheSeconds: z.number().default(30).volatile(),
+  queryIntervalSeconds: z.number().default(30).volatile(),
   history: z.boolean().default(true).volatile(),
-  historyIntervalSeconds: z.number().default(30).volatile(),
   historyDefaultRange: z.union(Object.keys(HISTORY_RANGES).map((value) => z.const(value))).default('1h').volatile(),
 })
 
@@ -53,7 +52,7 @@ function configValue(value) {
 
 /**
  * @param {import('@deepseek-ai/cordis').Context} ctx
- * @param {{ providers?: Record<string, object>, cacheSeconds?: number, history?: boolean, historyIntervalSeconds?: number, historyDefaultRange?: string }} [config]
+ * @param {{ providers?: Record<string, object>, queryIntervalSeconds?: number, history?: boolean, historyDefaultRange?: string }} [config]
  */
 export function apply(ctx, config = {}) {
   ctx.inject(['settings'], (child) => {
@@ -63,8 +62,8 @@ export function apply(ctx, config = {}) {
 
   const providerConfig = configValue(config.providers)
   const overrides = providerConfig && typeof providerConfig === 'object' ? providerConfig : undefined
-  const cacheSeconds = configValue(config.cacheSeconds)
-  const ttl = Number.isFinite(cacheSeconds) ? Math.max(0, cacheSeconds) * 1000 : CACHE_TTL_MS
+  const queryIntervalSeconds = configValue(config.queryIntervalSeconds)
+  const ttl = Number.isFinite(queryIntervalSeconds) ? Math.max(0, queryIntervalSeconds) * 1000 : CACHE_TTL_MS
   const history = configValue(config.history) === false
     ? undefined
     : createHistoryStore({ filePath: defaultHistoryPath() })
@@ -130,7 +129,7 @@ export function apply(ctx, config = {}) {
       await options.registry.ready
       return resolveRoute(context, provider, overrides, options.registry)
     },
-    intervalMs: historyIntervalMs(configValue(config.historyIntervalSeconds)),
+    intervalMs: historyIntervalMs(queryIntervalSeconds),
     readRoute: (route, { force } = {}) => readQuotaRoute(ctx, route, options, force),
   })
   ctx.effect(() => {
@@ -265,7 +264,7 @@ async function readQuotaRoute(ctx, route, options, force = false) {
               try {
                 await options.history.record(route.cacheKey, value, options.registry.historySpec(route))
               } catch {
-                // History persistence must never make an otherwise valid quota fail.
+                // History persistence failures are isolated from the quota response.
               }
             }
             writeCache(options.cache, route.cacheKey, value)

@@ -127,7 +127,7 @@ provider id 到额度路由的完整规则见 [providers.md](providers.md#自动
 
 ### 缓存与并发
 
-缓存键是 `provider + kind + endpoint + mode + keyNames` 的配置指纹，不包含凭证值；值是 `{ at, value }`。默认 TTL 30 秒，可由 `config.cacheSeconds` 覆盖。
+缓存键是 `provider + kind + endpoint + mode + keyNames` 的配置指纹，不包含凭证值；值是 `{ at, value }`。默认 TTL 30 秒，可由 `config.queryIntervalSeconds` 覆盖。
 
 - 只缓存 `ok: true` 的结果；`missing-credential`、`signed-out` 等终态不缓存，并删除同键旧成功值。
 - 同指纹请求共享 pending Promise，settle（包括 5 秒超时失败）后清理 pending。
@@ -137,15 +137,15 @@ provider id 到额度路由的完整规则见 [providers.md](providers.md#自动
 
 ### 历史采集与持久化
 
-`history` 配置默认为 `true`。Host 激活后立即执行一轮采集，之后默认每 30 秒触发一轮，可通过 `historyIntervalSeconds` 按秒调整（最小 1 秒），不依赖浏览器页面或会话是否打开；设为 `history: false` 时不注册历史路由、不启动定时器，也不写历史。
+`history` 配置默认为 `true`。Host 激活后立即执行一轮采集，之后按 `queryIntervalSeconds` 触发一轮（默认 30 秒，最短 1 秒），不依赖浏览器页面或会话是否打开；设为 `history: false` 时不注册历史路由、不启动定时器，也不写历史。
 
 - 每轮动态合并激活 provider、`config.providers` 和可用的 `deepseek-account`，经 `resolveRoute()` 过滤 unsupported / unavailable 路由。
 - 单轮最多 3 个 provider 并发，失败相互隔离；上一轮未完成时下一轮不重入。后台读取绕过 TTL，但与普通请求共享 pending 单飞和成功缓存。
 - 只有新鲜且 `ok: true` 的结果进入历史。缓存命中、stale、未登录、缺失凭证和网络错误均不写点。
-- 历史以 `route.cacheKey` 分区。首点总是保存，后续仅当 `kind / mode / currency / metrics` 变化时追加；`updatedAt`、`stale` 和 `resetAt` 不参与签名，避免相对重置时间产生伪变化。
-- 指标由当前 route 对应 Provider 的 `view.history` 声明，通过 `{ key, path, unit, label }` 提取；四种 preset 分别提供默认指标，Provider 自己的 `history` 数组会替换而非追加 preset 声明。没有可解析 history spec 或没有可提取数值时不写点，不再由 Host 固定遍历品牌白名单。金额保存原始字符串，绘图时才转数值。
+- 历史以 `route.cacheKey` 分区。首点总是保存，后续仅当 `kind / mode / currency / metrics` 变化时追加；签名只覆盖这四个字段，`updatedAt`、`stale` 与 `resetAt` 不参与。
+- 指标由当前 route 对应 Provider 的 `view.history` 声明，通过 `{ key, path, unit, label }` 提取；四种 preset 分别提供默认指标，Provider 自己的 `history` 数组会替换而非追加 preset 声明。没有可解析 history spec 或没有可提取数值时不写点。指标来源只有 Provider 声明，Host 不维护品牌白名单。金额保存原始字符串，绘图时才转数值。
 - 默认文件为 `$DSH_HOME/data/llm-quota-history.sqlite`，未设置 `DSH_HOME` 时使用 `~/.dsh/data/llm-quota-history.sqlite`。使用 Node `>=22.13.0` 内置 `node:sqlite` 和 WAL，无需第三方依赖。
-- `history_points` 按 `(provider_key, recorded_at, id)` 建索引，每个变化点在事务中增量 `INSERT`，不再复写全量历史；同一事务删除过期点并裁剪当前配置指纹的点数。区间查询分别读取最后一个基线点和后续变化点，存储异常不影响额度查询。
+- `history_points` 按 `(provider_key, recorded_at, id)` 建索引，每个变化点在事务中单条 `INSERT`；同一事务删除过期点并裁剪当前配置指纹的点数。区间查询分别读取最后一个基线点和后续变化点，存储异常不影响额度查询。
 - 每次写入清理 30 天前的数据，并将每个配置指纹限制为 20,000 点。重载后最后一点仍参与去重。
 
 历史路由为 `GET /api/llm-quota/history?provider=<id>&days=1|7|30`，也支持用 `hours=1|4|12` 替换 `days`；未提供范围参数时使用 `historyDefaultRange`（默认 `1h`），两个范围参数不能同时提供。它只解析当前 route 并读取本地文件，不访问上游，返回 `{ ok, provider, since, points, sampled, historyDefaultRange }`；结果额外包含区间前最后一个点作为基线。为限制传输与 SVG 渲染成本，Host 在查询后把响应抽样到最多 100 点，保留首末点和各指标极值，抽样时 `sampled: true`；这只影响响应，不删除 SQLite 原始点。认证、Host/Origin 检查和 `no-store` 行为与额度路由一致。
@@ -402,12 +402,12 @@ const provider = selection?.next?.provider ?? selection?.lastUsed?.provider ?? '
 - 首次挂载立即请求一次。
 - 每 60 秒轮询一次；切换 provider 时重置、abort 旧请求并立即重新请求，组件卸载时也会 abort。
 - 同一 Client effect 同时最多执行一个请求；Host 再按配置指纹做单飞。
-- 请求超时 8 秒（Host 单次读取最长 5 秒）；网络失败、超时或 Host 返回临时 `error` 时只保留之前的成功数据并标记 `stale`。
-- 终态响应直接替换旧数据；没有使用 SSE，避免为低频数据维护长连接。
+- 请求超时 8 秒（Host 单次读取最长 5 秒）；网络失败、超时或 Host 返回临时 `error` 时保留最近一次成功数据并标记 `stale`。
+- 终态响应直接替换旧数据；数据通过 HTTP 轮询获取，不使用 SSE 或长连接。
 
 ### 展开浮层
 
-点击条目后用 `ReactDOM.createPortal` 挂到 `document.body`，位置由触发按钮的 `getBoundingClientRect()` 计算，向上展开。放在 portal 里是因为 composer 位于可滚动容器内，普通绝对定位会被裁剪。
+点击条目后用 `ReactDOM.createPortal` 挂到 `document.body`，位置由触发按钮的 `getBoundingClientRect()` 计算，向上展开。composer 位于可滚动容器内，普通绝对定位会被裁掉。
 
 - 点击外部、按 `Escape`、窗口 resize 时关闭。
 - 样式只使用 `--dsw-alias-*`、`--dsw-specific-*` 和 `--dsh-*` 主题变量，不写死颜色。
@@ -415,18 +415,18 @@ const provider = selection?.next?.provider ?? selection?.lastUsed?.provider ?? '
 
 浮层中的历史区块由独立 `QuotaHistory` 组件负责，仅打开时请求历史路由，并每 20 秒重读本地历史；关闭、切换 provider 或卸载会 abort。额度条目本身仍按 60 秒刷新，不新增 UI 侧上游采样。
 
-- 支持近 1、4、12、24 小时、7 天、30 天和多指标切换。指标标签与默认曲线顺序来自 manifest 的 `history` 和 `historyPriority`，不再使用 Client 固定的品牌白名单。
+- 支持近 1、4、12、24 小时、7 天、30 天和多指标切换。指标标签与默认曲线顺序来自 manifest 的 `history` 和 `historyPriority`；Client 不维护品牌白名单。
 - 初始范围由 `historyDefaultRange` 决定，默认近 1 小时。新挂载时通过无范围历史请求读取生效配置；若用户尚未手动选择且配置不是 1 小时，再按配置范围查询。配置只决定初始范围，20 秒刷新不覆盖手动选择；保存后重新打开浮层或切换 provider 时使用新默认值。
 - SVG 通过非被动 wheel 监听逐级缩放：向上滚动缩短窗口、向下滚动放大窗口，220ms 节流，在 1 小时和 30 天边界停止，并阻止图表滚轮事件带动页面或浮层滚动。
 - 图表使用内联 SVG 阶梯线：区间前基线延伸到区间起点，最后一个实际值延伸到当前时间，展示用末点不会写回存储。
-- 百分比纵轴固定 0–100，金额轴按极值留白；摘要显示区间首值、最新值和变化量，数据点 `<title>` 提供精确时间与原始金额。
+- 百分比纵轴固定 0–100，金额轴按极值留白；摘要显示区间起始、最新值和变化量，数据点 `<title>` 提供精确时间与原始金额。
 - 加载、空历史、无指标和失败均有本地化状态，图表只使用 DSH 主题 token，不增加第三方图表依赖。
 
 ### 模型菜单与当前模型标签
 
-模型选择菜单的分组标题和输入区的当前模型标签由 ui-model-selection 渲染，它们不属于 composer dock，也没有可用的 list slot。`conversation.input.model.label` 虽然是官方的模型名替换入口，但它是 `single` slot，已被内置 `ui-deepseek-model-label-1017`（模型行里的 `1017` 徽标）以优先级 0 占用；同优先级注册会抛错，用 `priority: -1` 抢占会覆盖掉该徽标。
+模型选择菜单的分组标题和输入区的当前模型标签由 ui-model-selection 渲染，它们不属于 composer dock，也没有可用的 list slot。`conversation.input.model.label` 虽然是官方的模型名替换入口，但它是 `single` slot，已由内置 `ui-deepseek-model-label-1017`（模型行里的 `1017` 徽标）以优先级 0 占用，该 slot 不允许多方同时注册。
 
-本插件因此采用纯 CSS 装饰，复用 ui-model-selection 已公开的 DOM 钩子：
+本插件采用纯 CSS 装饰，复用 ui-model-selection 已公开的 DOM 钩子：
 
 | 位置 | 选择器 |
 | --- | --- |
@@ -440,7 +440,7 @@ const provider = selection?.next?.provider ?? selection?.lastUsed?.provider ?? '
 
 #### 数据源与刷新
 
-- `MutationObserver` 只观察新增节点，并且仅当节点自身匹配或包含 `span[data-provider-id]`、`[data-menu-group]` 时才触发扫描，避免聊天流式输出造成无谓扫描；扫描延迟 250ms 合并。
+- `MutationObserver` 只观察新增节点，且仅当节点自身匹配或包含 `span[data-provider-id]`、`[data-menu-group]` 时才触发扫描；扫描延迟 250ms 合并。
 - 每个 provider 一条记录：成功结果复用 60 秒；临时失败 30 秒后重试；失败与请求中都不会重复发起（Host 再做 30 秒缓存与单飞）。
 - 扫描会顺带读取触发器的 provider，因此新会话欢迎页（没有 dock）也能显示当前模型额度。
 - locale 切换时重算文案；DSH 升级后若 DOM 钩子改名，装饰会静默失效，不影响模型选择。
@@ -453,20 +453,19 @@ const provider = selection?.next?.provider ?? selection?.lastUsed?.provider ?? '
 - Client 启动时拉取字典并调用 `ctx.locale.register(NS, dictionaries)` 注册；注册可晚于界面挂载，locale service 会推进 revision，slot 文案无需重挂载即可更新。拉取失败按 30 秒间隔重试，直到字典落地。
 - slot 注册时传 `locale: NS`，框架注入绑定后的 `t`；字典未到达前由 `fallbackTranslate` 兜底（以 `en` 为准做占位符替换）。
 
-新增通用文案键需要同步全部 locale 文件；Provider messages 至少应提供 `en`，其他语言按需补充，并避免与其他 Provider 的全局 key 冲突。`test/locale.test.js` 固化了以下约定：dsh 支持的每种语言都有字典、各语言键集合与 `en` 一致、每键占位符一致、无死键、`tr()` 调用与动态键（错误键、通知键、范围标签等）都能解析到字典键，且 `client.js` 中不残留中文文案。
+新增通用文案键需要同步全部 locale 文件；Provider messages 至少应提供 `en`，其他语言按需补充，且 key 在全局合并后保持唯一。`test/locale.test.js` 固化了以下约定：dsh 支持的每种语言都有字典、各语言键集合与 `en` 一致、每键占位符一致、无死键、`tr()` 调用与动态键（错误键、通知键、范围标签等）都能解析到字典键，且 `client.js` 中不残留中文文案。
 
 ### 配置页面
 
-`client.js` 向 Plugins 页的 `plugins.bundle.config` keyed slot 注册配置页，key 为包名 `@cs-qyzhang/dsh-llm-quota`。页面出现在该 bundle 详情页的描述与行列表之间，分为「运行配置」和「供应商额外凭证」两区。
+`client.js` 向 Plugins 页的 `plugins.bundle.config` keyed slot 注册配置页，key 为包名 `@cs-qyzhang/dsh-llm-quota`。页面出现在该 bundle 详情页的描述与行列表之间，分为「插件配置」和「供应商额外凭证」两区。
 
-运行配置完整覆盖 Host 的六个配置项：
+插件配置完整覆盖 Host 的五个配置项：
 
 | 配置项 | 默认值 | UI 与约束 |
 | --- | --- | --- |
-| `cacheSeconds` | `30` | 成功缓存秒数，允许 0；留空恢复继承值 |
-| `history` | `true` | 历史采集开关；关闭后禁用间隔输入但保留草稿 |
-| `historyDefaultRange` | `1h` | 历史浮层初始范围下拉框；可选 `1h`、`4h`、`12h`、`1d`、`7d`、`30d`，保存后重新打开浮层生效 |
-| `historyIntervalSeconds` | `30` | 采集间隔秒数，最小 1；留空恢复继承值 |
+| `queryIntervalSeconds` | `30` | 查询间隔秒数，同时用作额度缓存 TTL 与历史采集间隔；允许 0（每次都重新查询）；留空恢复继承值 |
+| `history` | `true` | 额度历史记录开关 |
+| `historyDefaultRange` | `1h` | 额度详情初始范围下拉框；可选 `1h`、`4h`、`12h`、`1d`、`7d`、`30d`，保存后重新打开详情生效 |
 | `providers` | `{}` | JSON 编辑器；根及每个 provider 值必须是对象，所有适配器字段原样保存 |
 | `providerModules` | `[]` | JSON 编辑器；npm 模块名、绝对路径或相对 Host 工作目录的路径数组；支持 `default` / `provider` / `providers` 导出 |
 
@@ -490,8 +489,9 @@ const provider = selection?.next?.provider ?? selection?.lastUsed?.provider ?? '
 | Cloudflare Account ID | `CLOUDFLARE_ACCOUNT_ID` |
 
 - 状态读取使用 `remote.credentials.describe(refs)`，只返回 `configured` / `source` / `writable`；保存与清除分别调用 `remote.credentials.set(ref, value)` 和 `remote.credentials.unset(ref)`，明文不会回传浏览器。
-- 主引用未配置但兼容别名已配置时，页面显示「已配置（别名）」；由环境变量或更高配置层提供的凭据 `writable: false`，页面显示只读。
-- 单独保存凭证后 Host 的 30 秒成功缓存不会被主动清除，因此下一次额度刷新（客户端最长 60 秒）才会读到新凭证。
+- `source` 经 `CREDENTIAL_SOURCE_KEYS` 映射为可读文案：`env` / `process` 显示「来源：环境变量」，`file` / `config` 显示「来源：配置文件」，`settings` / `credentials` 显示「来源：在本页保存」；未识别的标识回退为 `credentialSource` 原样展示。
+- 主引用未配置但兼容别名已配置时，页面显示「已通过 {别名} 配置」；由环境变量或更高配置层提供的凭据 `writable: false`，页面显示只读。
+- 单独保存凭证不触发缓存失效；Host 的 30 秒成功缓存到期后，下一次额度刷新才读到新凭证，客户端轮询间隔最长 60 秒。
 
 ## 本地开发与验证
 
@@ -516,7 +516,7 @@ curl -i 'http://127.0.0.1:3090/api/llm-quota?provider=zai-coding-cn'
 2. 状态行应出现额度条目，且不影响原有条目。
 3. 点击条目应弹出浮层，`Escape` 可关闭。
 4. 切换模型后条目内容应随 provider 变化。
-5. Plugins → Installed plugins → 模型额度 的详情页应出现「运行配置」与「供应商额外凭证」。六项配置应显示当前值，非法数值 / JSON / 时间范围不得发起写入；保存后刷新页面仍保持，并立即重建 Host 路由与采集器。默认历史范围为近 1 小时；改为近 30 天保存后，重新打开浮层应默认选中该范围，手动选择不受 20 秒刷新影响。
+5. Plugins → Installed plugins → 模型额度 的详情页应出现「插件配置」与「供应商额外凭证」。六项配置应显示当前值，非法数值 / JSON / 时间范围不得发起写入；保存后刷新页面仍保持，并立即重建 Host 路由与采集器。默认历史范围为近 1 小时；保存为近 30 天后，重新打开详情应默认选中该范围，手动选择不受 20 秒刷新影响。
 6. 供应商凭证保存 / 清除后状态应即时变化，别名与只读状态保持原有行为。
 7. 控制台不应出现 `slot entry crashed in 'conversation.composer.dock'`。
 
@@ -532,4 +532,4 @@ curl -i 'http://127.0.0.1:3090/api/llm-quota?provider=zai-coding-cn'
 - 自动解析只处理 DSH 激活 provider 和已知 HTTPS 主机；`config.providers` 是受信任的显式例外，未知输入不会进入缓存或触发上游请求。
 - 状态行只在 `variant === 'composer'` 且有 session 时渲染；这是 ui-conversation 的既有行为。
 - 供应商接口或展示字段变更通常只需修改对应 Provider 的 `read/view/present`；只有新增通用版式、公共响应字段或 Client 交互时才需要修改通用核心。
-- `package.json` 声明支持 Node `>=22.13.0` 和 DSH `>=0.2.1-rc.2 <0.2.2 || >=0.2.2-0 <0.2.3`。Loader 同时兼容 `fiber.effectiveConfig` 与旧 `fiber.config`；这是包声明范围，不代表每个版本均已完成真实浏览器验证，升级后仍需重新核对配置结构并执行 smoke。
+- 支持范围在 `package.json` 的 `engines` 中声明，文档不重复版本号。Loader 同时兼容 `fiber.effectiveConfig` 与旧 `fiber.config`；升级 dsh 后仍需重新核对配置结构并执行 smoke。

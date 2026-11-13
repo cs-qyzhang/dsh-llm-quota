@@ -105,7 +105,7 @@ export async function read({ route, credentials, http, nowIso }, _route) {
   return result
 }
 
-/** Return the JSON payload or the transport error instead of throwing. */
+/** Return the JSON payload or the transport error as a value. */
 async function tryFetchJson(http, url, init) {
   try {
     return { payload: await http.json(url, init) }

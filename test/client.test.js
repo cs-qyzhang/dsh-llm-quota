@@ -95,11 +95,11 @@ test('requests the message dictionaries from the i18n route', async (t) => {
 
 test('uses one hour in old settings drafts and saves only a changed range', () => {
   const { plugin } = loadClient()
-  const draft = plugin.__test.createSettingsDraft({ cacheSeconds: 10, history: false })
+  const draft = plugin.__test.createSettingsDraft({ queryIntervalSeconds: 10, history: false })
   assert.equal(draft.historyDefaultRange, '1h')
-  assert.equal(draft.cacheSeconds, '10')
+  assert.equal(draft.queryIntervalSeconds, '10')
   assert.equal(draft.history, false)
-  const snapshot = { value: { cacheSeconds: 30, history: true }, user: {} }
+  const snapshot = { value: { queryIntervalSeconds: 30, history: true }, user: {} }
   const unchanged = plugin.__test.settingsOperations(plugin.__test.createSettingsDraft(), snapshot)
   assert.deepEqual(plain(unchanged), { ops: [] })
   const changed = plugin.__test.settingsOperations({ ...plugin.__test.createSettingsDraft(), historyDefaultRange: '30d' }, snapshot)
@@ -154,7 +154,7 @@ async function renderHistory(t, { configuredRange, manualRange }) {
     refCursor = 0
     return plugin.__test.QuotaHistory({ provider: 'custom', tr: (key) => key })
   }
-  const rangeSelect = (value) => findNode(value, (node) => node.type === 'select' && node.props['aria-label'] === 'historyTitle')
+  const rangeSelect = (value) => findNode(value, (node) => node.type === 'select' && node.props['aria-label'] === 'historyRangeLabel')
   const flush = () => new Promise((resolve) => setImmediate(resolve))
   let dispose
   const runEffect = () => {
@@ -249,11 +249,11 @@ test('renders balance payloads across services', () => {
   assertLabels(balance, {
     compact: 'balance:{"amount":"¥12.50"}',
     badge: '¥12.50',
-    title: 'balanceTitle',
+    title: 'title',
   })
   assertLabels({ ...balance, service: 'moonshot' }, { title: 'moonshotTitle' })
   assertLabels({ ...balance, service: 'radius' }, { title: 'Radius' })
-  assertLabels({ ok: true, kind: 'balance', currency: 'USD', amount: '3' }, { title: 'balanceTitle' })
+  assertLabels({ ok: true, kind: 'balance', currency: 'USD', amount: '3' }, { title: 'title' })
 })
 
 test('renders credits payloads with and without cycle fallback', () => {
@@ -357,14 +357,14 @@ test('renders xiaomi mimo balance, plan and hybrid modes', () => {
   assertLabels({ ok: true, kind: 'xiaomi-mimo' }, { compact: 'error', badge: '', title: 'mimoTitle' })
 })
 
-test('falls back to plan windows and coin title for unknown kinds', () => {
+test('falls back to plan windows and a generic title for unknown kinds', () => {
   assertLabels({
     ok: true, kind: 'custom-kind',
     fiveHour: { remainingPercent: 20 }, weekly: { remainingPercent: 50 }, monthly: { remainingPercent: 80 },
   }, {
     compact: 'fiveHour:{"percent":20} · weekly:{"percent":50}',
     badge: 'badgeFiveHour:{"percent":20} · badgeWeekly:{"percent":50}',
-    title: 'balanceTitle',
+    title: 'title',
   })
 })
 

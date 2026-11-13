@@ -34,8 +34,8 @@ const XIAOMI_HOST = 'xiaomimimo.com'
  * Auto-resolved routes always know the inference host, which is authoritative:
  * `token-plan-*` hosts are the Token Plan and everything else is pay-as-you-go.
  * Explicit `config.providers` overrides only expose the provider id, so fall
- * back to `xiaomi` / `xiaomi-token-plan-*` and leave unknown ids unspecified
- * (the legacy "both sections" behaviour).
+ * back to `xiaomi` / `xiaomi-token-plan-*`; other ids stay unspecified and read
+ * both sections.
  */
 export function billingMode(provider, baseURL) {
   if (typeof baseURL === 'string') {

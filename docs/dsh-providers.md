@@ -5,7 +5,7 @@
 1. dsh（DeepSeek Harness）本身支持哪些三方模型 Provider；
 2. dsh-llm-quota 当前对它们的支持 / 不支持情况。
 
-清单核对自本机安装的 dsh 0.2.1-rc.2 内置目录：pi-ai 提供方目录（`@earendil-works/pi-ai` 的 `providers/`）、`dsh-llm-pi-ai` 的 `PROVIDER_DATA`（端点与凭证引用），以及 `dsh-llm-deepseek` 的 DeepSeek 直连路由。pi-ai 升级新增提供方后，本表需要同步维护。
+清单核对自本机安装的 dsh 内置目录：pi-ai 提供方目录（`@earendil-works/pi-ai` 的 `providers/`）、`dsh-llm-pi-ai` 的 `PROVIDER_DATA`（端点与凭证引用），以及 `dsh-llm-deepseek` 的 DeepSeek 直连路由。pi-ai 升级新增提供方后，本表需要同步维护。
 
 ## dsh 的 Provider 从哪来
 
@@ -86,7 +86,7 @@
 
 ### 订阅 / OAuth 登录型
 
-GitHub Copilot、OpenAI Codex（legacy）、OpenCode Go、Radius 已移到上表：Copilot 用 GitHub Token、Codex 用显式配置的 ChatGPT OAuth Token + Account ID 读取订阅额度，OpenCode Go 用 `OPENCODE_GO_API_KEY` 读取 `opencode.ai/zen/go/v1/usage`，Radius 用组织级 `RADIUS_API_KEY` 读取余额。
+GitHub Copilot、OpenAI Codex（legacy）、OpenCode Go、Radius 属于订阅 / OAuth 登录型，但有可读取额度的专用凭证：Copilot 用 GitHub Token、Codex 用显式配置的 ChatGPT OAuth Token + Account ID 读取订阅额度，OpenCode Go 用 `OPENCODE_GO_API_KEY` 读取 `opencode.ai/zen/go/v1/usage`，Radius 用组织级 `RADIUS_API_KEY` 读取余额；provider id 与端点见上表。
 
 Kimi、OpenRouter 等虽然也支持 OAuth 订阅登录，但它们同时提供推理 Key：配好 `apiKeyEnv` 后，Kimi / OpenRouter 仍可正常显示额度（见上表）。xAI 的订阅额度不在推理 Key 上，插件改用控制台 Management Key 读取账单（见上表）。
 
@@ -110,10 +110,10 @@ Kimi、OpenRouter 等虽然也支持 OAuth 订阅登录，但它们同时提供�
 
 - 手写网关路由（`llm-pi-ai.config.providers`）只要 `baseURL` 的主机命中已知映射（如自建代理转发到 `api.kimi.com`），插件同样能显示额度。
 - 主机未知的代理不会被猜测额度地址；在插件行的 `config.providers` 里显式声明 `kind`、`endpoint`、`keyNames` 即可复用现有适配器，无需改代码，见 [providers.md](providers.md#自定义或增加-provider)。
-- OAuth-only 路由不再一概返回 `unsupported`：定义了专用 `route()` 的 Provider 默认可在 OAuth gate 之前尝试，以使用控制台或专用凭证；当前包括 MiMo、Qwen、xAI、Anthropic、OpenAI、Copilot、Codex、OpenCode Go、Cloudflare 和 DeepSeek。它们仍依赖激活的 DSH 目录与 profile；其余 OAuth-only 路由、未激活 provider、未知自托管地址默认返回 `unsupported`。该通用行为由 `allowSpecialBeforeOAuth` 控制。
+- OAuth-only 路由按 provider 区分处理：定义了专用 `route()` 的 Provider 默认在 OAuth gate 之前尝试，以使用控制台或专用凭证；当前包括 MiMo、Qwen、xAI、Anthropic、OpenAI、Copilot、Codex、OpenCode Go、Cloudflare 和 DeepSeek。它们仍依赖激活的 DSH 目录与 profile；其余 OAuth-only 路由、未激活 provider、未知自托管地址返回 `unsupported`。该通用行为由 `allowSpecialBeforeOAuth` 控制。
 
 ## 四、想让某个供应商显示额度
 
 1. 先确认 dsh 中该 provider 的路由 id 与 `baseURL` 主机（模型选择器里的 provider id 即路由名）。
 2. 若主机已命中本文第一节的映射，只差凭证配置。
-3. 否则按 [providers.md](providers.md#接入新的额度体系) 实现独立 Provider 并通过 `providerModules` 加载；若收入内置版本，则新增 `providers/<kind>.js` 并在 `builtinProviders()` 登记。URL 识别写入 Provider 自身的 `route()`，不再向 `providers/resolve.js` 或 `client.js` 添加品牌分支，并同步更新本文与根目录 README 的支持范围。
+3. 否则按 [providers.md](providers.md#接入新的额度体系) 实现独立 Provider 并通过 `providerModules` 加载；若收入内置版本，则新增 `providers/<kind>.js` 并在 `builtinProviders()` 登记。URL 识别写入 Provider 自身的 `route()`；`providers/resolve.js` 与 `client.js` 只处理通用流程，不包含品牌分支。新增 Provider 后同步更新本文与根目录 README 的支持范围。

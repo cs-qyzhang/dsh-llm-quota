@@ -3,9 +3,9 @@
  *
  * The inference API key cannot read billing, so quota uses the read-only
  * Management Key created in the xAI console. The team is resolved through the
- * key-validation endpoint; keys without a single acting team are rejected
- * instead of guessing across teams. Amounts are USD cents in which a negative
- * accounting total means available prepaid credit.
+ * key-validation endpoint; keys without a single acting team are rejected.
+ * Amounts are USD cents in which a negative accounting total means available
+ * prepaid credit.
  */
 
 import { decimalAmount } from './shared.js'

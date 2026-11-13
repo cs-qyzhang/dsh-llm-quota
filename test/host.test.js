@@ -232,9 +232,8 @@ test('declares live config defaults and preserves arbitrary provider fields', ()
     },
   }
   const config = Config({ providers })
-  assert.equal(config.cacheSeconds.get(), 30)
+  assert.equal(config.queryIntervalSeconds.get(), 30)
   assert.equal(config.history.get(), true)
-  assert.equal(config.historyIntervalSeconds.get(), 30)
   assert.equal(config.historyDefaultRange.get(), '1h')
   assert.deepEqual(config.providers.get(), providers)
   for (const range of ['1h', '4h', '12h', '1d', '7d', '30d']) {
@@ -244,10 +243,28 @@ test('declares live config defaults and preserves arbitrary provider fields', ()
   assert.throws(() => Config({ historyDefaultRange: 4 }))
 })
 
+test('round-trips provider overrides through simplify without dropping adapter fields', () => {
+  const providers = {
+    custom: {
+      kind: 'glm',
+      mode: 'plan',
+      endpoint: 'https://quota.example.test/v1',
+      keyNames: ['CUSTOM_KEY'],
+      futureField: { nested: true },
+    },
+  }
+  const config = Config({ providers })
+  const simplified = Config.simplify(config)
+  assert.deepEqual(simplified.providers, providers)
+  assert.deepEqual(Config(simplified).providers.get(), providers)
+  assert.throws(() => Config({ providers: { custom: 'glm' } }))
+  assert.throws(() => Config({ providers: { custom: [] } }))
+})
+
 test('reads volatile config refs and restarts after a settings update', async (t) => {
   const host = createHarness({
     config: {
-      cacheSeconds: { get: () => 0 },
+      queryIntervalSeconds: { get: () => 0 },
       historyDefaultRange: { get: () => '30d' },
       providers: {
         get: () => ({
@@ -262,7 +279,7 @@ test('reads volatile config refs and restarts after a settings update', async (t
 
   await host.request('custom')
   await host.request('custom')
-  assert.equal(calls.length, 2, 'zero cacheSeconds from a volatile ref should disable caching')
+  assert.equal(calls.length, 2, 'zero queryIntervalSeconds from a volatile ref should disable caching')
   assert.deepEqual(host.state.settingsPresentation, { auto: false })
   await host.volatileUpdate()
   assert.equal(host.state.restarts, 1)
@@ -553,7 +570,7 @@ test('treats empty GLM and Kimi payloads as failures and preserves stale success
       zai: { defaultBaseURL: 'https://api.z.ai/api/coding/paas/v4', nativeEnv: ['ZAI_API_KEY'] },
     },
     keys: { KIMI_API_KEY: 'kimi-key', ZAI_API_KEY: 'zai-key' },
-    config: { cacheSeconds: 0 },
+    config: { queryIntervalSeconds: 0 },
   })
   mockFetch(t, async (_url, _init, count) => {
     if (count === 1) return json(KIMI_RESPONSE)
@@ -586,7 +603,7 @@ test('returns the last account balance as stale after a structured DSH failure',
         } : { status: 'failed' }
       },
     },
-    config: { cacheSeconds: 0 },
+    config: { queryIntervalSeconds: 0 },
   })
 
   const first = await body(await host.request('deepseek-account'))
@@ -610,7 +627,7 @@ test('terminal states replace success and are not cached', async (t) => {
         }
       },
     },
-    config: { cacheSeconds: 0 },
+    config: { queryIntervalSeconds: 0 },
   })
   await accountHost.request('deepseek-account')
   signedOut = true
@@ -623,7 +640,7 @@ test('terminal states replace success and are not cached', async (t) => {
       'kimi-coding': { defaultBaseURL: 'https://api.kimi.com/coding', nativeEnv: ['KIMI_API_KEY'] },
     },
     keys: { KIMI_API_KEY: 'kimi-key' },
-    config: { cacheSeconds: 0 },
+    config: { queryIntervalSeconds: 0 },
   })
   mockFetch(t, async () => json(KIMI_RESPONSE))
   await keyHost.request('kimi-coding')
@@ -643,7 +660,7 @@ test('deduplicates concurrent loads and cleans pending after failure', async (t)
       },
     },
     keys: { KIMI_API_KEY: 'kimi-key' },
-    config: { cacheSeconds: 0 },
+    config: { queryIntervalSeconds: 0 },
   })
   const gate = deferred()
   let failNext = false
@@ -740,7 +757,7 @@ test('cuts off a hanging account service at the deadline and releases pending', 
         }
       },
     },
-    config: { cacheSeconds: 0 },
+    config: { queryIntervalSeconds: 0 },
   })
   t.mock.timers.enable({ apis: ['setTimeout'] })
 
@@ -771,7 +788,7 @@ test('returns the last successful balance as stale after a timeout', async (t) =
         }
       },
     },
-    config: { cacheSeconds: 0 },
+    config: { queryIntervalSeconds: 0 },
   })
 
   await host.request('deepseek-account')
@@ -791,7 +808,7 @@ test('aborts a hanging response body at the Host deadline', async (t) => {
   const host = createHarness({
     providers: { 'kimi-coding': { defaultBaseURL: 'https://api.kimi.com/coding', nativeEnv: ['KIMI_API_KEY'] } },
     keys: { KIMI_API_KEY: 'kimi-key' },
-    config: { cacheSeconds: 0 },
+    config: { queryIntervalSeconds: 0 },
   })
   t.after(host.dispose)
   let signal

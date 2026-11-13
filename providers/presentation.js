@@ -27,9 +27,7 @@ function resetLabel(iso) {
   if (!Number.isFinite(time)) return undefined
   const difference = time - Date.now()
   if (difference > 0 && difference < 86_400_000) {
-    const hours = Math.floor(difference / 3_600_000)
-    const minutes = Math.max(1, Math.floor((difference % 3_600_000) / 60_000))
-    return message('resetsIn', { time: hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m` })
+    return message('resetsIn', { time: { duration: iso } })
   }
   return message('resetsAt', { time: { relative: iso, options: { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' } } })
 }

@@ -70,7 +70,7 @@ Baseten、Fireworks AI、Together AI 官方没有余额接口，插件显示的�
 
 小米 MiMo 的主机（`api.xiaomimimo.com` 与 `token-plan-*.xiaomimimo.com`）不映射到推理 Key 的额度接口，而是统一走控制台 Cookie 适配器 `xiaomi-mimo`；阿里云百炼 Token Plan 的主机（`token-plan.*.maas.aliyuncs.com`）同样不能用推理 Key 查额度，改走控制台网关适配器 `qwen`。两者的细节见后文。
 
-OAuth-only 路由不再一概返回 `unsupported`。MiMo、Qwen、xAI、Anthropic、OpenAI、GitHub Copilot、OpenAI Codex、OpenCode Go、Cloudflare 和 DeepSeek 的专用 `route()` 默认可在 OAuth-only gate 之前尝试，以使用各自控制台或专用凭证；该行为由 `allowSpecialBeforeOAuth` 控制，可显式关闭。专用路由仍要求 DSH 中存在激活的目录和可用 profile，凭证缺失时返回适配器定义的缺失凭证原因。其余 OAuth-only 路由、未知代理、自托管地址和未激活 provider 均返回 `unsupported`，不会向上游发送凭证。自定义代理可通过 `config.providers` 显式声明额度端点和凭证引用；显式覆盖在该 gate 之前处理。
+OAuth-only 路由按 provider 区分处理。MiMo、Qwen、xAI、Anthropic、OpenAI、GitHub Copilot、OpenAI Codex、OpenCode Go、Cloudflare 和 DeepSeek 的专用 `route()` 默认在 OAuth-only gate 之前尝试，以使用各自控制台或专用凭证；该行为由 `allowSpecialBeforeOAuth` 控制，可显式关闭。专用路由仍要求 DSH 中存在激活的目录和可用 profile，凭证缺失时返回适配器定义的缺失凭证原因。其余 OAuth-only 路由、未知代理、自托管地址和未激活 provider 均返回 `unsupported`，不向上游发送凭证。自定义代理可通过 `config.providers` 显式声明额度端点和凭证引用；显式覆盖在该 gate 之前处理。
 
 ## DeepSeek 账号（按量计费）
 
@@ -89,7 +89,7 @@ dsh 的 `deepseek-account` 路由使用账号登录，余额来自 DeepSeek Plat
 - `value` 是充值余额，`bonusWallets` 是赠送余额，两者分开。
 - 插件把 CNY 钱包作为状态行的主金额，其余钱包在展开面板逐条列出。
 - `status` 为 `failed` 属于临时失败：有旧成功余额时返回 `stale`，否则返回 `error`；返回 `null` 或账号未登录时返回 `signed-out` 并清除旧值。
-- 调用需要 `AccountClientMetadata`：版本、locale、时区偏移。插件固定传 `0.2.1-rc.2`、`zh_CN` 和本机时区偏移。
+- 调用需要 `AccountClientMetadata`：版本、locale、时区偏移。插件固定传客户端版本号、`zh_CN` 和本机时区偏移。
 
 ## DeepSeek API Key（按量计费）
 
@@ -368,7 +368,7 @@ Authorization: Bearer <实时 BASETEN_API_KEY>
 | 字段 | 含义 |
 | --- | --- |
 | `total` | 该类别的总费用（USD），三个类别求和作为「本月已用」 |
-| `credits_used` | 抵扣掉的赠送额度（USD），面板显示为「已用抵扣」 |
+| `credits_used` | 抵扣掉的赠送额度（USD），面板显示为「抵扣金额」 |
 | `subtotal` | 扣除抵扣后的实付费用（USD），面板显示为「实付小计」 |
 
 注意：
@@ -415,7 +415,7 @@ Authorization: Bearer <实时 FIREWORKS_API_KEY>
 
 ## Together AI（本月已用）
 
-Together 已下线历史上的余额接口（`/v1/billing/credit`），现行的用量接口按月报告费用行项目：
+Together 通过月度用量接口报告费用行项目：
 
 ```http
 GET https://api.together.ai/v1/billing/usage?month=<YYYY-MM>
@@ -595,7 +595,7 @@ refs:
 
 只要推理 `baseURL` 的主机属于 `*.xiaomimimo.com`，插件会自动走控制台 Cookie 适配器并推断计费类型。只有想换 Cookie 凭据名、走代理或自定义 provider 名时才需要显式覆盖。
 
-推荐在 **Plugins → Installed plugins → 模型额度 → 运行配置 → 自定义 Providers（JSON）** 中编辑，保存后立即生效。UI 中填写 `providers` 映射本身，不需要再包一层 `providers` 键，例如：
+推荐在 **Plugins → Installed plugins → 模型额度 → 插件配置 → 自定义供应商覆盖（JSON）** 中编辑，保存后立即生效。UI 中填写 `providers` 映射本身，不需要再包一层 `providers` 键，例如：
 
 ```json
 {
@@ -627,7 +627,7 @@ refs:
         keyNames: [MY_MIMO_COOKIE]
 ```
 
-显式覆盖会整体替换自动解析结果，因此 `endpoint` 与 `keyNames` 都要写。`mode` 可选值为 `balance`（只查余额）或 `plan`（只查 Token Plan）；不写时按 provider id 推断，识别不出则保留旧的「余额 + 套餐」行为。pi-ai 的 provider profile 没有 `cookieEnv` 字段，自定义 Cookie 名请用这里的 `llm-quota.config.providers`，不要写进 `llm-pi-ai.providers.xiaomi`。
+显式覆盖会整体替换自动解析结果，因此 `endpoint` 与 `keyNames` 都要写。`mode` 可选值为 `balance`（只查余额）或 `plan`（只查 Token Plan）；不写时按 provider id 推断，识别不出时同时读取余额与套餐。pi-ai 的 provider profile 没有 `cookieEnv` 字段，自定义 Cookie 名请用这里的 `llm-quota.config.providers`，不要写进 `llm-pi-ai.providers.xiaomi`。
 
 **4. 生效与验证**
 
@@ -683,12 +683,12 @@ x-timezone: Asia/Shanghai
 }
 ```
 
-- 按量计费只返回 `amount`、`cashBalance`、`giftBalance`、`frozenBalance` 与 `currency`，不再附带 `plan`。
-- Token Plan 只返回 `plan`，不再附带余额字段。
+- 按量计费只返回 `amount`、`cashBalance`、`giftBalance`、`frozenBalance` 与 `currency`，不含 `plan`。
+- Token Plan 只返回 `plan`，不含余额字段。
 - 响应中的 `mode`（`balance` / `plan`）供客户端区分标题与图标；未指定模式的自定义覆盖不返回该字段。
 - `balance` 是剩余总额，`cashBalance` 与 `giftBalance` 是拆分项；`amount` 取 `balance`，缺失时回退 `cashBalance`。
 - 币种按 `userProfile.idc` 判断：`310` 为 `CNY`，其他为 `USD`；Token Plan 模式不请求 `userProfile`。
-- `usage.items` 中的 `plan_total_token` 是套餐窗口，`compensation_total_token` 是补偿积分；`monthUsage.items` 中的 `month_total_token` 是本月用量。
+- `usage.items` 中的 `plan_total_token` 是套餐窗口，`compensation_total_token` 是补偿额度；`monthUsage.items` 中的 `month_total_token` 是本月额度。
 - `percent` 是 0–1 的小数；插件优先用 `used / limit` 计算百分比，字段缺失时回退 `percent`。
 - `tokenPlan/detail` 提供 `planName` 与 `currentPeriodEnd`，后者作为套餐窗口的重置时间。
 - 对应模式的接口可用即返回成功；按量模式无余额、Token Plan 模式无套餐窗口时按临时失败处理。`missing-cookie` 是终态，客户端显示「未配置 MiMo 控制台 Cookie」。
@@ -796,7 +796,7 @@ Authorization: Bearer <OPENCODE_GO_API_KEY>
 
 注意：
 
-- 状态行显示「5h 剩 X% · 周 剩 Y%」，月窗口在展开面板显示为「月额度」。
+- 状态行显示「5 小时剩 X% · 周剩 Y%」，月窗口在展开面板显示为「月额度」。
 - `percent` 的语义是**已用**不是剩余，与社区同源工具（opencode-plan-usage 等）的进度条一致：新窗口是 0%，`rate-limited` 时到 100%。
 - `rolling` 与 `weekly` 缺失按临时失败处理；`monthly` 可选，缺失时面板少一行。
 
@@ -912,7 +912,7 @@ Authorization: Bearer <Admin Key>
 | 字段 | 含义 |
 | --- | --- |
 | `results[].amount.value` | 该行费用（USD 小数），全部行求和作为「本月已用」 |
-| `has_more` / `next_page` | 分页游标；插件跟随 `next_page` 继续请求，最多 100 页；游标缺失、重复或达到上限时按临时失败处理，避免静默展示不完整成本 |
+| `has_more` / `next_page` | 分页游标；插件跟随 `next_page` 继续请求，最多 100 页；游标缺失、重复或达到上限时按临时失败处理 |
 
 插件会附带请求用量接口补充统计（失败只丢弃附加信息）：
 
@@ -1004,7 +1004,7 @@ ChatGPT-Account-Id: <account_id>
 注意：
 
 - 这是从 openai/codex 源码逆向出来的**非公开内部接口**，不是公开承诺，字段与可用性可能随时变化，需要容错。
-- 状态行显示「5h 剩 X% · 周 剩 Y%」；5 小时窗口缺失按临时失败处理，周窗口可选。
+- 状态行显示「5 小时剩 X% · 周剩 Y%」；5 小时窗口缺失按临时失败处理，周窗口可选。
 - 凭证缺失返回 `missing-credential`，客户端显示「未配置 ChatGPT OAuth Token」。
 
 ## 自定义或增加 provider
@@ -1103,7 +1103,7 @@ export default defineProvider({
 })
 ```
 
-在「运行配置 → 自定义 Provider 模块」中保存模块说明符，例如：
+在「插件配置 → 自定义供应商模块（JSON）」中保存模块说明符，例如：
 
 ```json
 ["./providers/acme-provider.mjs"]
@@ -1167,4 +1167,4 @@ export default defineProvider({
 - Anthropic / OpenAI 的用量走 Admin API（成本 / 用量报表），需要 Admin Key（`sk-ant-admin…` / `sk-admin…`），报表数据比实时用量略有滞后，Anthropic 的 `amount` 是 USD 美分。
 - GitHub Copilot 的 `copilot_internal/user` 与 OpenAI Codex 的 `chatgpt.com/backend-api/wham/usage` 都是非公开内部接口（后者从 openai/codex 源码逆向），字段或可用性可能随时变化，需按临时失败容错。
 - Radius 的组织 / 账单接口与 Cloudflare 的 AI Gateway 计费接口需要各自的专用凭证（组织级 API Key、账户级 API Token + Account ID），与推理凭证分开管理。
-- 包声明支持 DSH `>=0.2.1-rc.2 <0.2.2 || >=0.2.2-0 <0.2.3`；Loader 优先读取 `fiber.effectiveConfig`，回退 `fiber.config`。该范围不等同于每个版本均已完成真实浏览器验证，升级后需重新核对目录、配置结构和 manifest 行为。
+- 支持的 dsh 范围只在 `package.json` 的 `engines` 中声明；Loader 优先读取 `fiber.effectiveConfig`，回退 `fiber.config`。升级 dsh 后需重新核对目录、配置结构和 manifest 行为。

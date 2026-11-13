@@ -54,10 +54,30 @@ window.__ModuleLoader__.load({
         return manifest.messages?.[language]?.[key] ?? manifest.messages?.en?.[key]
       }
 
-      /** Provider params carry relative times as `{ relative, options }`. */
+      function unitAmount(value, unit) {
+        try {
+          return new Intl.NumberFormat(language, { style: 'unit', unit, unitDisplay: 'narrow' }).format(value)
+        } catch {
+          return `${value}${unit === 'hour' ? 'h' : 'm'}`
+        }
+      }
+
+      function durationText(milliseconds) {
+        const clamped = Math.max(0, milliseconds)
+        const hours = Math.floor(clamped / 3_600_000)
+        const minutes = Math.max(1, Math.floor((clamped % 3_600_000) / 60_000))
+        const hourText = unitAmount(hours, 'hour')
+        const minuteText = unitAmount(minutes, 'minute')
+        return hours > 0 ? `${hourText} ${minuteText}` : minuteText
+      }
+
+      /** Provider params carry times as `{ relative, options }` or durations as `{ duration }`. */
       function formatParam(param) {
         if (param && typeof param === 'object' && typeof param.relative === 'string') {
           return absoluteTime(Date.parse(param.relative), param.options)
+        }
+        if (param && typeof param === 'object' && typeof param.duration === 'string') {
+          return durationText(Date.parse(param.duration) - Date.now())
         }
         return param
       }
@@ -103,12 +123,6 @@ window.__ModuleLoader__.load({
         return tr('remaining', { percent: window.remainingPercent })
       }
 
-      function relativeDuration(milliseconds) {
-        const hours = Math.floor(milliseconds / 3_600_000)
-        const minutes = Math.max(1, Math.floor((milliseconds % 3_600_000) / 60_000))
-        return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`
-      }
-
       function absoluteTime(time, options) {
         return new Date(time).toLocaleString(undefined, options ?? {
           month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
@@ -120,7 +134,7 @@ window.__ModuleLoader__.load({
         if (!Number.isFinite(time)) return null
         const difference = time - Date.now()
         if (difference > 0 && difference < 86_400_000) {
-          return tr('resetsIn', { time: relativeDuration(difference) })
+          return tr('resetsIn', { time: durationText(difference) })
         }
         return tr('resetsAt', { time: absoluteTime(time) })
       }
@@ -214,7 +228,7 @@ window.__ModuleLoader__.load({
         return registered ?? {
           preset: data?.kind === 'balance' || data?.amount !== undefined || data?.wallets !== undefined || typeof data?.available === 'boolean' ? 'balance'
             : data?.usedAmount !== undefined || data?.requestCount !== undefined ? 'usage' : 'plan',
-          title: { key: 'balanceTitle' }, gauge: false,
+          title: { key: 'title' }, gauge: false,
         }
       }
 
@@ -727,7 +741,7 @@ window.__ModuleLoader__.load({
         h('select', {
           value: range,
           onChange: (event) => selectRange(event.target.value),
-          'aria-label': tr('historyTitle'),
+          'aria-label': tr('historyRangeLabel'),
           style: selectStyle,
         }, HISTORY_RANGES.map((entry) => h('option', { key: entry.id, value: entry.id }, tr(entry.label))))),
       series.length > 1 ? h('label', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 } },
@@ -845,8 +859,8 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
           seen.add(provider)
           load(provider)
         }
-        // Drop providers that disappeared from the DOM so their quota polling
-        // stops; the periodic refresh runs after scan and re-renders from `feed`.
+        // Drop providers that disappeared from the DOM; quota polling only
+        // covers providers in `feed`. The periodic refresh runs after scan.
         for (const provider of [...feed.keys()]) {
           if (!seen.has(provider)) feed.delete(provider)
         }
@@ -927,6 +941,16 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
       }
     }
 
+    /** Identifier -> message key for the config source shown next to a credential. */
+    const CREDENTIAL_SOURCE_KEYS = {
+      env: 'credentialSourceEnv',
+      process: 'credentialSourceEnv',
+      file: 'credentialSourceFile',
+      config: 'credentialSourceFile',
+      settings: 'credentialSourceSettings',
+      credentials: 'credentialSourceSettings',
+    }
+
     /**
      * One extra console credential for a provider family. The value is staged in
      * the browser and written through the Host credentials Remote, so it never
@@ -983,9 +1007,10 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
       const source = configuredRefs
         .map((ref) => views?.[ref]?.source)
         .find((value) => typeof value === 'string' && value.length > 0)
+      const sourceKey = source ? CREDENTIAL_SOURCE_KEYS[source] : undefined
       const disabled = busy !== '' || loading || loadError !== '' || !primaryWritable
-      // clear() skips read-only refs on its own, so clearing stays available as
-      // long as any configured ref is writable even when the primary is not.
+      // clear() skips read-only refs; clearing is available while any
+      // configured ref is writable.
       const clearDisabled = busy !== '' || loading || loadError !== '' || !clearable
 
       const status = loading
@@ -1062,7 +1087,8 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
             fontVariantNumeric: 'tabular-nums',
           },
         }, status),
-        source ? h('span', { style: { color: TOKENS.textDim, fontSize: 11 } }, tr('credentialSource', { source })) : null),
+        source ? h('span', { style: { color: TOKENS.textDim, fontSize: 11 } },
+          sourceKey ? tr(sourceKey) : tr('credentialSource', { source })) : null),
       h('p', { style: { margin: 0, color: TOKENS.textDim, fontSize: 11, lineHeight: '16px' } }, props.hint),
       h('div', { style: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 } },
         h('input', {
@@ -1125,10 +1151,9 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
 
     function createSettingsDraft(value = {}) {
       return {
-        cacheSeconds: String(value.cacheSeconds ?? 30),
+        queryIntervalSeconds: String(value.queryIntervalSeconds ?? 30),
         history: value.history !== false,
         historyDefaultRange: normalizeHistoryRange(value.historyDefaultRange),
-        historyIntervalSeconds: String(value.historyIntervalSeconds ?? 30),
         providerModules: JSON.stringify(value.providerModules ?? [], null, 2),
         providers: JSON.stringify(value.providers ?? {}, null, 2),
       }
@@ -1137,12 +1162,10 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
     function settingsOperations(draft, snapshot) {
       const current = snapshot.value ?? {}
       const user = snapshot.user && typeof snapshot.user === 'object' ? snapshot.user : {}
-      const cacheText = draft.cacheSeconds.trim()
-      const intervalText = draft.historyIntervalSeconds.trim()
+      const intervalText = draft.queryIntervalSeconds.trim()
       const providersText = draft.providers.trim()
       const modulesText = draft.providerModules.trim()
-      let cacheSeconds
-      let historyIntervalSeconds
+      let queryIntervalSeconds
       let providers
       let providerModules
 
@@ -1150,14 +1173,10 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
       if (historyDefaultRange !== draft.historyDefaultRange) {
         return { error: { key: 'historyDefaultRangeInvalid' } }
       }
-      if (cacheText) {
-        cacheSeconds = Number(cacheText)
-        if (!Number.isFinite(cacheSeconds) || cacheSeconds < 0) return { error: { key: 'cacheSecondsInvalid' } }
-      }
       if (intervalText) {
-        historyIntervalSeconds = Number(intervalText)
-        if (!Number.isFinite(historyIntervalSeconds) || historyIntervalSeconds < 1) {
-          return { error: { key: 'historyIntervalInvalid' } }
+        queryIntervalSeconds = Number(intervalText)
+        if (!Number.isFinite(queryIntervalSeconds) || queryIntervalSeconds < 0) {
+          return { error: { key: 'queryIntervalSecondsInvalid' } }
         }
       }
       if (providersText) {
@@ -1182,10 +1201,9 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
       }
 
       const fields = [
-        ['cacheSeconds', cacheSeconds, cacheText === '', Object.is(current.cacheSeconds ?? 30, cacheSeconds)],
+        ['queryIntervalSeconds', queryIntervalSeconds, intervalText === '', Object.is(current.queryIntervalSeconds ?? 30, queryIntervalSeconds)],
         ['history', draft.history, false, Object.is(current.history !== false, draft.history)],
         ['historyDefaultRange', historyDefaultRange, false, Object.is(normalizeHistoryRange(current.historyDefaultRange), historyDefaultRange)],
-        ['historyIntervalSeconds', historyIntervalSeconds, intervalText === '', Object.is(current.historyIntervalSeconds ?? 30, historyIntervalSeconds)],
         ['providers', providers, providersText === '', JSON.stringify(current.providers ?? {}) === JSON.stringify(providers)],
         ['providerModules', providerModules, modulesText === '', JSON.stringify(current.providerModules ?? []) === JSON.stringify(providerModules)],
       ]
@@ -1316,14 +1334,14 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
       loading && !draft ? h('p', { style: hintStyle }, tr('settingsLoading')) : null,
       draft ? h(React.Fragment, null,
         h('label', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
-          h('span', { style: labelStyle }, tr('cacheSeconds')),
+          h('span', { style: labelStyle }, tr('queryIntervalSeconds')),
           h('input', {
-            type: 'number', min: 0, step: 'any', value: draft.cacheSeconds, disabled,
-            'aria-label': tr('cacheSeconds'),
-            onChange: (event) => update('cacheSeconds', event.target.value),
+            type: 'number', min: 0, step: 'any', value: draft.queryIntervalSeconds, disabled,
+            'aria-label': tr('queryIntervalSeconds'),
+            onChange: (event) => update('queryIntervalSeconds', event.target.value),
             style: inputStyle,
           }),
-          h('p', { style: hintStyle }, tr('cacheSecondsHint'))),
+          h('p', { style: hintStyle }, tr('queryIntervalSecondsHint'))),
         h('label', { style: { display: 'flex', alignItems: 'flex-start', gap: 8 } },
           h('input', {
             type: 'checkbox', checked: draft.history, disabled,
@@ -1343,16 +1361,6 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
             style: inputStyle,
           }, HISTORY_RANGES.map((entry) => h('option', { key: entry.id, value: entry.id }, tr(entry.label)))),
           h('p', { style: hintStyle }, tr('historyDefaultRangeHint'))),
-        h('label', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
-          h('span', { style: labelStyle }, tr('historyIntervalSeconds')),
-          h('input', {
-            type: 'number', min: 1, step: 'any', value: draft.historyIntervalSeconds,
-            disabled: disabled || !draft.history,
-            'aria-label': tr('historyIntervalSeconds'),
-            onChange: (event) => update('historyIntervalSeconds', event.target.value),
-            style: inputStyle,
-          }),
-          h('p', { style: hintStyle }, tr('historyIntervalSecondsHint'))),
         h('label', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
           h('span', { style: labelStyle }, tr('providersConfig')),
           h('textarea', {
@@ -1461,9 +1469,9 @@ section[data-menu-group]:has(span[data-provider-id]) > [data-menu-group-heading]
             const data = await requestQuota(provider, controller.signal)
             if (disposed) return
             if (data.ok === false && data.reason === 'error') {
-              // Transient failure: keep whatever payload (a success or an
-              // actionable terminal state like missing-credential) is on
-              // screen and mark it stale instead of clobbering it.
+              // Transient failure: keep the current payload (a success or an
+              // actionable terminal state like missing-credential) and mark it
+              // stale.
               setState((previous) => previous.data
                 ? { data: { ...previous.data, stale: true }, error: false }
                 : { data, error: false })

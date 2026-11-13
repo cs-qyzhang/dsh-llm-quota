@@ -79,7 +79,7 @@ export function createProviderRegistry({ plugins = [], modules = [] } = {}) {
     failure(route, error) {
       const plugin = byKind.get(route.kind)
       if (!plugin) return {}
-      // Only public fields: spreading `route` would leak keyNames/cacheKey/endpoint.
+      // Public fields only: keyNames, cacheKey and endpoint stay on the Host.
       const result = { provider: route.provider, kind: route.kind, ok: false, reason: 'error', error: String(error?.message ?? error).slice(0, 300), updatedAt: new Date().toISOString() }
       return { ...result, ...providerFailure(plugin, result), viewId: plugin.kind }
     },
